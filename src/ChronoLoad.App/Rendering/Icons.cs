@@ -72,8 +72,6 @@ public static class Icons
     public static Geometry Reset { get; } = Parse("M13,8 A5,5 0 1 1 11.4,4.3 M13,2 V5 H10");
     public static Geometry Pin { get; } = Parse("M8,10 V14 M5,3 H11 L10,8 L12,10 H4 L6,8 Z");
     public static Geometry Theme { get; } = Parse("M8,2.5 A5.5,5.5 0 1 0 8,13.5 A4.2,4.2 0 0 1 8,2.5 Z");
-    public static Geometry Preset { get; } = Group(
-        RoundedRect(2, 3, 12, 3, 1), RoundedRect(2, 8.5, 7, 3, 1), Lines((2, 13.5, 6, 13.5)));
     public static Geometry Minimize { get; } = Parse("M3.5,8.5 H12.5");
     public static Geometry Close { get; } = Parse("M4,4 L12,12 M12,4 L4,12");
 
