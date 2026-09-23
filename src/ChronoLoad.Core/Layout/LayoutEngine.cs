@@ -3,7 +3,12 @@ namespace ChronoLoad.Core.Layout;
 /// <param name="Weight">같은 조건에서의 상대 높이. GPU는 1.5, 나머지는 1.0.</param>
 /// <param name="Priority">공간이 모자랄 때 <b>누가 먼저 접히는가</b>만 결정한다. 낮을수록 먼저 접힌다.</param>
 /// <param name="UserCollapsed">사용자나 프리셋이 접어둔 카드. 자동 복원 대상이 아니다.</param>
-public readonly record struct CardSpec(string Key, double Weight, int Priority, bool UserCollapsed = false);
+/// <param name="ExpandOrder">
+/// 사용자가 이 카드를 직접 편 순서. 클수록 최근이고 0은 "직접 편 적 없음"이다.
+/// <b>우선순위보다 먼저 본다</b> — 방금 연 카드가 그 자리에서 다시 접히면 카드가 열리지 않는다.
+/// </param>
+public readonly record struct CardSpec(
+    string Key, double Weight, int Priority, bool UserCollapsed = false, long ExpandOrder = 0);
 
 /// <param name="AutoCollapsed">공간이 모자라 강제로 접힌 카드. 점선 테두리로 구분하고 공간이 생기면 되돌린다.</param>
 public readonly record struct CardLayout(string Key, double Height, bool Collapsed, bool AutoCollapsed);
@@ -58,12 +63,23 @@ public static class LayoutEngine
             double smallest = avail * minWeight / weightSum;
             if (smallest >= MinExpandedHeight) break;
 
+            // 누가 자리를 내주는가.
+            //
+            // 1순위는 <b>사용자가 가장 오래 전에 편 카드</b>다. 우선순위만 보면 방금 연 카드가
+            //   바로 그 자리(Wi-Fi 50 · 디스크 60)라 즉시 다시 접혀, 클릭해도 카드가 열리지 않는다.
+            //   직접 누른 선택이 표에 적힌 기본값보다 앞선다.
+            // 2순위가 우선순위 표다. 아무도 손대지 않은 동안에는(전부 0) 예전과 똑같이 동작한다.
             int victim = -1;
             for (int i = 0; i < cards.Count; i++)
             {
                 if (collapsed[i]) continue;
-                if (victim < 0 || cards[i].Priority < cards[victim].Priority) victim = i;
+                if (victim < 0 || IsWeakerThan(cards[i], cards[victim])) victim = i;
             }
+
+            static bool IsWeakerThan(in CardSpec candidate, in CardSpec current) =>
+                candidate.ExpandOrder != current.ExpandOrder
+                    ? candidate.ExpandOrder < current.ExpandOrder
+                    : candidate.Priority < current.Priority;
 
             if (victim < 0) break;
             collapsed[victim] = true;

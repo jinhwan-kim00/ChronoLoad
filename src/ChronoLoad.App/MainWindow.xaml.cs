@@ -272,12 +272,23 @@ public partial class MainWindow : Window
     } * 100 + device.Index;
 
     private static CardSpec ToSpec(CardView card) => new(
-        card.Model.Key, card.Model.Weight, card.Model.Priority, card.Model.UserCollapsed);
+        card.Model.Key, card.Model.Weight, card.Model.Priority, card.Model.UserCollapsed,
+        card.Model.ExpandOrder);
+
+    /// <summary>사용자가 카드를 편 순서. 늘어나기만 한다.</summary>
+    private long _expandSequence;
 
     private void OnCardToggled(CardView card)
     {
+        bool expanding = card.Model.Collapsed;
+
         card.Model.UserCollapsed = !card.Model.Collapsed;
         card.Model.AutoCollapsed = false;
+
+        // 방금 편 카드가 이번 배치에서 가장 마지막에 접히도록 도장을 찍는다.
+        // 이게 없으면 우선순위가 낮은 카드(Wi-Fi·디스크)는 펴자마자 다시 접혀 영영 열리지 않는다.
+        if (expanding) card.Model.ExpandOrder = ++_expandSequence;
+
         ApplyLayout(animate: true);
         MarkSettingsDirty();
     }

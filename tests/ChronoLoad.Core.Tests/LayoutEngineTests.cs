@@ -59,6 +59,56 @@ public class LayoutEngineTests
     }
 
     [Fact]
+    public void A_card_the_user_just_opened_is_not_the_one_that_closes()
+    {
+        // 자리가 꽉 찬 상태에서 우선순위가 낮은 카드(net0 50)를 열면, 우선순위만 보는 규칙은
+        // 방금 연 그 카드를 희생양으로 고른다 — 클릭해도 카드가 열리지 않는다. 실제로 그랬다.
+        var cards = DefaultCards();
+        cards[7] = cards[7] with { UserCollapsed = false };          // gpu1 도 펼쳐 자리를 없앤다
+        cards[2] = cards[2] with { ExpandOrder = 1 };                // net0 를 방금 열었다
+
+        var layout = LayoutEngine.Compute(cards, 868);
+
+        Assert.False(layout.First(l => l.Key == "net0").Collapsed);
+        Assert.Contains(layout, l => l.AutoCollapsed);               // 대신 누군가는 접혔다
+    }
+
+    [Fact]
+    public void The_longest_untouched_card_gives_way_first()
+    {
+        // 사용자가 직접 연 순서가 우선순위보다 앞선다. 둘 다 사용자가 열었다면
+        // 더 오래 전에 연 쪽이 자리를 내준다 — 직접 누른 선택이 표에 적힌 기본값보다 앞선다.
+        var cards = new CardSpec[]
+        {
+            new("high", 1.0, 100, ExpandOrder: 1),   // 우선순위는 높지만 먼저 열었다
+            new("low",  1.0, 30,  ExpandOrder: 2),   // 우선순위는 낮지만 방금 열었다
+            new("third", 1.0, 50, ExpandOrder: 3),
+        };
+
+        var layout = LayoutEngine.Compute(cards, 300);
+
+        Assert.True(layout.First(l => l.Key == "high").AutoCollapsed);
+        Assert.False(layout.First(l => l.Key == "low").Collapsed);
+    }
+
+    [Fact]
+    public void Untouched_cards_still_follow_the_priority_table()
+    {
+        // 아무도 손대지 않은 동안에는(ExpandOrder 가 전부 0) 예전과 똑같이 동작해야 한다.
+        var cards = new CardSpec[]
+        {
+            new("keep", 1.0, 100),
+            new("mid",  1.0, 60),
+            new("low",  1.0, 30),
+        };
+
+        var layout = LayoutEngine.Compute(cards, 300);
+
+        Assert.True(layout.First(l => l.Key == "low").AutoCollapsed);
+        Assert.False(layout.First(l => l.Key == "keep").Collapsed);
+    }
+
+    [Fact]
     public void Auto_collapse_respects_priority_order_when_several_must_go()
     {
         var cards = new CardSpec[]

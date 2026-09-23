@@ -78,6 +78,15 @@ public sealed class CardViewModel
 
     public bool UserCollapsed { get; set; }
     public bool AutoCollapsed { get; set; }
+
+    /// <summary>
+    /// 사용자가 이 카드를 직접 편 순서. 클수록 최근이고 0은 직접 편 적이 없다는 뜻이다.
+    /// 공간이 모자랄 때 누가 자리를 내줄지 고르는 1순위 기준이다 (§8.6).
+    /// </summary>
+    /// <remarks>
+    /// 세션 안에서만 의미가 있어 설정에 저장하지 않는다 — 다시 켜면 우선순위 표가 다시 기준이 된다.
+    /// </remarks>
+    public long ExpandOrder { get; set; }
     public bool Collapsed => UserCollapsed || AutoCollapsed;
 
     public string Key => Device.Key;
