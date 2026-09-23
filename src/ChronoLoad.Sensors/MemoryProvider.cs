@@ -75,8 +75,9 @@ public sealed class MemoryProvider : ISensorProvider
             : 0;
     }
 
+    // 단위는 GB 까지 적는다. G 만 붙이면 무엇의 G 인지 읽는 사람이 알 수 없다.
     private static string FormatGiB(ulong bytes) =>
-        bytes == 0 ? "?" : $"{bytes / (1024.0 * 1024 * 1024):0.#}G";
+        bytes == 0 ? "?" : $"{bytes / (1024.0 * 1024 * 1024):0.#}GB";
 
     public void Dispose() => IsAvailable = false;
 }

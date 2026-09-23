@@ -49,6 +49,15 @@ public static class CardFactory
                 DisplayUnit = MetricUnit.Percent,
                 Weight = 1,
                 Priority = 90,
+
+                // 코어별 사용률은 채널로 붙어 있다. CoreProvider 가 없으면 빈 배열이고
+                // 오버레이는 조용히 막대를 생략한다 — 코어를 못 읽는다고 카드가 달라질 일은 아니다.
+                Cores = [.. device.Channels
+                    .Select(registry.Series)
+                    .OfType<MetricSeries>()],
+
+                // 효율 등급은 부팅 후 고정이라 시계열이 아니라 장치 정보로 온다.
+                CoreClasses = ParseCoreClasses(device.Info.Extra.GetValueOrDefault("coreEfficiencyClasses")),
             };
         }
 
@@ -153,5 +162,18 @@ public static class CardFactory
             Weight = isNpu ? 1.0 : 1.5,     // GPU 가 주 용도이므로 같은 조건에서 1.5배 높다
             Priority = isNpu ? 75 : device.Index == 0 ? 100 : 80,
         };
+    }
+
+    /// <summary><c>1,1,1,1,0,0,0,0</c> → 효율 등급 배열. 형식이 어긋나면 빈 배열이다.</summary>
+    private static IReadOnlyList<byte> ParseCoreClasses(string? raw)
+    {
+        if (string.IsNullOrEmpty(raw)) return [];
+
+        var parts = raw.Split(',');
+        var classes = new byte[parts.Length];
+        for (int i = 0; i < parts.Length; i++)
+            if (!byte.TryParse(parts[i], out classes[i])) return [];
+
+        return classes;
     }
 }

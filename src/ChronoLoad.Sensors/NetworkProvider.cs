@@ -137,12 +137,20 @@ public sealed class NetworkProvider : ISensorProvider
         };
     }
 
+    /// <summary>
+    /// 협상된 링크 속도. 카드 이름에 붙어 같은 종류의 인터페이스를 구분하는 데 쓰인다.
+    /// </summary>
+    /// <remarks>
+    /// <b><c>bps</c> 까지 적는다.</b> <c>G</c> 만 붙이면 Wi-Fi 에서 <c>2.4G</c> 가 나오는데,
+    /// 이것은 2.4Gbps 링크 속도인데도 2.4GHz 밴드로 읽힌다. 실제로 그렇게 읽혔다 —
+    /// 그 기기의 실제 밴드는 5GHz 였다.
+    /// </remarks>
     private static string FormatLinkSpeed(ulong bitsPerSecond) => bitsPerSecond switch
     {
         0 or ulong.MaxValue => string.Empty,
-        >= 1_000_000_000 => $"{bitsPerSecond / 1e9:0.#}G",
-        >= 1_000_000 => $"{bitsPerSecond / 1e6:0}M",
-        _ => $"{bitsPerSecond / 1e3:0}K",
+        >= 1_000_000_000 => $"{bitsPerSecond / 1e9:0.#}Gbps",
+        >= 1_000_000 => $"{bitsPerSecond / 1e6:0}Mbps",
+        _ => $"{bitsPerSecond / 1e3:0}Kbps",
     };
 
     /// <summary>Wi-Fi 라디오 on/off·어댑터 착탈 시 다음 샘플에서 다시 열거하도록 표시한다.</summary>

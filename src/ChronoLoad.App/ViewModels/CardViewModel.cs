@@ -28,6 +28,18 @@ public sealed class CardViewModel
     public MetricSeries? MemoryDedicated { get; init; }
     public MetricSeries? MemoryShared { get; init; }
 
+    /// <summary>
+    /// 논리 코어별 사용률. 오버레이의 코어 미니 바가 읽는다 (§5.1).
+    /// 상시 화면에는 나오지 않는다 — 코어 수만큼 늘어나는 것을 카드에 두면 텍스트 예산이 무너진다.
+    /// </summary>
+    public IReadOnlyList<MetricSeries> Cores { get; init; } = [];
+
+    /// <summary>
+    /// 코어별 효율 등급. <see cref="Cores"/> 와 같은 순서이며, 구분할 것이 없으면 빈 배열이다.
+    /// 값이 클수록 성능 지향 — 제조사가 정하는 값이라 "1이면 P코어"로 고정해 읽지 않는다.
+    /// </summary>
+    public IReadOnlyList<byte> CoreClasses { get; init; } = [];
+
     /// <summary>전용 VRAM 용량. 0이면 용량선을 그리지 않는다.</summary>
     public double DedicatedCapacity { get; init; }
 
@@ -128,6 +140,23 @@ public sealed class CardViewModel
         series is null ? float.NaN
         : scrubIndex is { } index ? SampleAt(series, index)
         : series.Latest;
+
+    /// <summary>
+    /// 스크럽 시점의 코어별 사용률. 값이 없는 코어는 NaN 이다. 코어가 없으면 빈 배열.
+    /// </summary>
+    /// <remarks>
+    /// <b>오버레이의 다른 행과 같은 시점을 읽어야 한다.</b> 코어만 "지금" 값을 쓰면 과거를
+    /// 고정해 놓고 보는 패널 안에서 한 줄만 현재가 되어, 같이 놓인 총 사용률과 아귀가 맞지 않는다.
+    /// 코어별 시계열을 들고 있는 이유가 이것이다 — 최신 값만 두면 이 줄을 못 맞춘다.
+    /// </remarks>
+    public float[] CoreUsage(int index)
+    {
+        if (Cores.Count == 0) return [];
+
+        var values = new float[Cores.Count];
+        for (int i = 0; i < values.Length; i++) values[i] = SampleAt(Cores[i], index);
+        return values;
+    }
 
     /// <summary>표시 창 안의 인덱스로 값을 읽는다. 창은 항상 최근 <paramref name="window"/>개다.</summary>
     public static float SampleAt(MetricSeries series, int index, int window = 240)

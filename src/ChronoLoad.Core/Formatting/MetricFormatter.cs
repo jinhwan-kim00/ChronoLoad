@@ -38,29 +38,42 @@ public static class MetricFormatter
         };
     }
 
+    /// <remarks>
+    /// <b>단위 기호는 줄이지 않는다.</b> <c>G</c> 하나만 붙여 두면 용량인지 속도인지, 바이트인지
+    /// 비트인지 읽는 사람이 알 수 없다. 실제로 Wi-Fi 의 <c>2.4G</c>(2.4Gbps 링크 속도)를
+    /// 2.4GHz 밴드로 읽는 일이 있었다. 두 글자 아껴서 값을 오해하게 만들 이유가 없다.
+    /// <para>
+    /// 1024 기준이면서 <c>GB</c> 로 적는 것은 Windows 의 표기와 맞춘 것이다 — 작업 관리자가
+    /// 보여주는 숫자와 같은 값이어야 대조가 된다.
+    /// </para>
+    /// </remarks>
     private static FormattedValue Bytes(double bytes)
     {
         double abs = Math.Abs(bytes);
-        return abs >= TiB ? new FormattedValue(Round(bytes / TiB, 2), "T")
-             : abs >= GiB ? new FormattedValue(Round(bytes / GiB, abs >= 10 * GiB ? 1 : 2), "G")
-             : abs >= MiB ? new FormattedValue(Round(bytes / MiB, 0), "M")
-             : new FormattedValue(Round(bytes / KiB, 0), "K");
+        return abs >= TiB ? new FormattedValue(Round(bytes / TiB, 2), "TB")
+             : abs >= GiB ? new FormattedValue(Round(bytes / GiB, abs >= 10 * GiB ? 1 : 2), "GB")
+             : abs >= MiB ? new FormattedValue(Round(bytes / MiB, 0), "MB")
+             : new FormattedValue(Round(bytes / KiB, 0), "KB");
     }
 
     private static FormattedValue BitRate(double bytesPerSecond)
     {
         double bits = bytesPerSecond * 8;
-        return bits >= Giga ? new FormattedValue(Round(bits / Giga, 2), "Gb")
-             : bits >= Mega ? new FormattedValue(Round(bits / Mega, bits >= 100 * Mega ? 0 : 1), "Mb")
-             : new FormattedValue(Round(bits / Kilo, 0), "Kb");
+        return bits >= Giga ? new FormattedValue(Round(bits / Giga, 2), "Gbps")
+             : bits >= Mega ? new FormattedValue(Round(bits / Mega, bits >= 100 * Mega ? 0 : 1), "Mbps")
+             : new FormattedValue(Round(bits / Kilo, 0), "Kbps");
     }
 
+    /// <remarks>
+    /// <c>/s</c> 를 반드시 붙인다. 용량 쪽이 <c>KB</c> 이므로 여기서도 <c>KB</c> 로 적으면
+    /// 같은 기호가 크기와 속도 두 가지를 뜻하게 된다 — 카드 두 장을 나란히 두면 바로 헷갈린다.
+    /// </remarks>
     public static FormattedValue ByteRate(double bytesPerSecond)
     {
         double abs = Math.Abs(bytesPerSecond);
-        return abs >= Giga ? new FormattedValue(Round(bytesPerSecond / Giga, 2), "GB")
-             : abs >= Mega ? new FormattedValue(Round(bytesPerSecond / Mega, abs >= 100 * Mega ? 0 : 1), "MB")
-             : new FormattedValue(Round(bytesPerSecond / Kilo, 0), "KB");
+        return abs >= Giga ? new FormattedValue(Round(bytesPerSecond / Giga, 2), "GB/s")
+             : abs >= Mega ? new FormattedValue(Round(bytesPerSecond / Mega, abs >= 100 * Mega ? 0 : 1), "MB/s")
+             : new FormattedValue(Round(bytesPerSecond / Kilo, 0), "KB/s");
     }
 
     /// <summary>
@@ -89,11 +102,13 @@ public static class MetricFormatter
         return (texts, reference.Unit);
     }
 
+    // 여기 키는 위 포매터가 내는 기호와 글자 하나까지 같아야 한다. 어긋나면 기본 가지로 떨어져
+    // 값이 1000배 틀린 채로 멀쩡해 보인다 — 단위 기호를 바꿀 때 같이 고쳐야 하는 자리다.
     private static double DivisorFor(MetricUnit unit, string suffix) => unit switch
     {
-        MetricUnit.Bytes => suffix switch { "T" => TiB, "G" => GiB, "M" => MiB, _ => KiB },
-        MetricUnit.BitRate => suffix switch { "Gb" => Giga / 8, "Mb" => Mega / 8, _ => Kilo / 8 },
-        MetricUnit.ByteRate => suffix switch { "GB" => Giga, "MB" => Mega, _ => Kilo },
+        MetricUnit.Bytes => suffix switch { "TB" => TiB, "GB" => GiB, "MB" => MiB, _ => KiB },
+        MetricUnit.BitRate => suffix switch { "Gbps" => Giga / 8, "Mbps" => Mega / 8, _ => Kilo / 8 },
+        MetricUnit.ByteRate => suffix switch { "GB/s" => Giga, "MB/s" => Mega, _ => Kilo },
         _ => 1,
     };
 

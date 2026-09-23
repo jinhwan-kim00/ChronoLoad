@@ -310,6 +310,11 @@ public sealed class CardView : Border
             Child = _overlayRows,
         };
         Grid.SetRow(_overlay, 1);
+
+        // 차트 행 하나에 가두면 카드가 짧을 때 패널 아래쪽이 잘린다 — 코어 막대처럼 줄이 늘어나는
+        // 내용에서 바로 드러난다. 푸터 행까지 걸쳐 필요한 만큼 내려가게 둔다.
+        // 스크럽 중에만 보이는 요소라 푸터를 잠깐 덮는 편이 내용이 잘리는 것보다 낫다.
+        Grid.SetRowSpan(_overlay, 2);
         _grid.Children.Add(_overlay);
 
         _chart.MouseMove += (_, e) =>
@@ -517,8 +522,93 @@ public sealed class CardView : Border
             _overlayRows.Children.Add(row);
         }
 
+        if (isFocus && BuildCoreBars(index.Value, palette) is { } cores) _overlayRows.Children.Add(cores);
+
         _overlay.Visibility = Visibility.Visible;
         PositionOverlay(index.Value);
+    }
+
+    /// <summary>
+    /// 논리 코어별 사용률 미니 바 (§5.1, UX §04). 코어 채널이 없으면 null.
+    /// </summary>
+    /// <remarks>
+    /// <b>숫자가 아니라 막대인 이유.</b> 여기서 읽는 것은 "8번 코어가 몇 퍼센트인가"가 아니라
+    /// "한 코어만 물려 있나, 고르게 퍼졌나"다 — 단일 스레드 병목과 전체 부하를 가르는 판단이고,
+    /// 형태로 봐야 한 눈에 들어온다. 코어 16개의 숫자를 늘어놓으면 오버레이가 표가 된다.
+    /// <para>
+    /// 값이 없는 코어(파킹·이번 틱 누락)는 빈 눈금으로 남긴다. 0% 로 그리면 "쉬는 중"으로
+    /// 읽히는데 실제로는 "모른다"이므로 둘을 같은 그림으로 만들면 안 된다.
+    /// </para>
+    /// </remarks>
+    private StackPanel? BuildCoreBars(int index, ThemePalette palette)
+    {
+        var usage = Model.CoreUsage(index);
+        if (usage.Length == 0) return null;
+
+        // 막대가 너무 얇으면 값을 못 읽는다. 코어가 많을 때만 좁히고, 보통은 넉넉히 준다.
+        double barWidth = usage.Length <= 12 ? 10 : usage.Length <= 24 ? 6 : 4;
+        const double BarHeight = 26, Gap = 2;
+
+        var classes = Model.CoreClasses;
+        bool classed = classes.Count == usage.Length;
+
+        // 효율 등급은 순서가 있는 값(클수록 성능 지향)이라 <b>같은 색의 진하기</b>로 나타낸다.
+        // 자리를 등급끼리 모으거나 틈을 주는 방법도 있었지만, 그러면 막대 위치가 코어 번호와
+        // 어긋나고 등급이 셋 이상인 칩에서 틈이 늘어난다. 진하기는 등급 수가 몇이든 그대로 는다.
+        var ranks = classed ? classes.Distinct().Order().ToArray() : [];
+        var fills = new Dictionary<byte, System.Windows.Media.Brush>();
+        var accent = Model.Accent(palette);
+
+        foreach (byte cls in ranks)
+        {
+            // 가장 옅은 단계도 빈 눈금과는 확실히 갈려야 한다. 0x99 아래로 내리면
+            // 값이 작은 효율 코어가 "값 없음"처럼 보인다.
+            double t = ranks.Length <= 1 ? 1 : Array.IndexOf(ranks, cls) / (double)(ranks.Length - 1);
+            fills[cls] = Frozen(System.Windows.Media.Color.FromArgb(
+                (byte)(0x99 + (0xFF - 0x99) * t), accent.R, accent.G, accent.B));
+        }
+
+        var plain = Frozen(accent);
+        var track = Frozen(palette.Line);
+
+        var column = new StackPanel { Margin = new Thickness(0, 4, 0, 0) };
+        var bars = new StackPanel { Orientation = Orientation.Horizontal };
+
+        for (int core = 0; core < usage.Length; core++)
+        {
+            var slot = new Border
+            {
+                Width = barWidth,
+                Height = BarHeight,
+                Background = track,
+                Margin = new Thickness(0, 0, Gap, 0),
+            };
+
+            if (!float.IsNaN(usage[core]))
+                slot.Child = new Border
+                {
+                    Background = classed ? fills[classes[core]] : plain,
+                    VerticalAlignment = VerticalAlignment.Bottom,
+                    Height = Math.Max(1, BarHeight * Math.Clamp(usage[core], 0, 100) / 100),
+                };
+
+            bars.Children.Add(slot);
+        }
+
+        column.Children.Add(bars);
+        column.Children.Add(new TextBlock
+        {
+            // 진하기가 무엇을 뜻하는지 말해주지 않으면 그냥 색이 다른 막대로 보인다.
+            Text = classed && ranks.Length > 1
+                ? $"논리 코어 {usage.Length} · 진할수록 고성능"
+                : $"논리 코어 {usage.Length}",
+            FontFamily = MonoFont,
+            FontSize = 9.5,
+            Foreground = Frozen(palette.Dim),
+            Margin = new Thickness(0, 2, 0, 0),
+        });
+
+        return column;
     }
 
     /// <summary>커서 반대편으로 자동 플립해 데이터를 가리지 않는다.</summary>

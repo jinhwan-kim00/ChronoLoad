@@ -123,6 +123,8 @@ var options = new SamplingOptions();
 await using var engine = new SampleEngine(registry, options);
 
 await engine.AddProviderAsync(new CpuProvider());
+// 코어별은 CPU 장치에 채널로 얹히므로 CpuProvider 뒤여야 한다.
+await engine.AddProviderAsync(new CoreProvider());
 await engine.AddProviderAsync(new MemoryProvider());
 await engine.AddProviderAsync(new NetworkProvider());
 await engine.AddProviderAsync(new DiskProvider());
@@ -235,6 +237,21 @@ Console.WriteLine();
 Console.WriteLine("장치");
 foreach (var device in registry.ActiveDevices.OrderBy(d => d.Info.Class).ThenBy(d => d.Index))
     Console.WriteLine($"  [{device.Info.Class,-7}] {device.Info.ShortName,-24} {device.Info.FullName}");
+
+// 코어별 사용률은 채널 슬롯이라 위 표에 나오지 않는다(오버레이 전용). 값이 실제로 들어오는지는
+// UI 없이도 봐야 하므로 여기서 따로 찍는다 — 전부 NaN 이면 카운터 경로가 죽은 것이다.
+foreach (var device in registry.ActiveDevices.Where(d => d.Channels.Count > 0))
+{
+    Console.WriteLine();
+    Console.WriteLine($"{device.Info.ShortName} 채널 {device.Channels.Count}개 (코어별 사용률)");
+    for (int i = 0; i < device.Channels.Count; i++)
+    {
+        float latest = registry.Series(device.Channels[i])?.Latest ?? float.NaN;
+        Console.Write($"  {i,2}:{(float.IsNaN(latest) ? "   —" : $"{latest,4:0}")}%");
+        if (i % 8 == 7) Console.WriteLine();
+    }
+    if (device.Channels.Count % 8 != 0) Console.WriteLine();
+}
 
 Console.WriteLine();
 Console.WriteLine("리셋 이후 구간 통계");

@@ -110,6 +110,64 @@ public class MetricRegistryTests
     }
 
     [Fact]
+    public void Channels_get_their_own_slots_without_becoming_metric_kinds()
+    {
+        // 코어별 사용률은 채널이다. 지표 종류로 세면 CpuCore0..63 같은 열거가 생기고
+        // 그 순간 코어 수가 MCP 지표 목록과 카드 축 선택에까지 새어 나간다.
+        var registry = new MetricRegistry(64);
+        var cpu = registry.Register(
+            new DeviceInfo("cpu", DeviceClass.System, "CPU", "테스트 CPU", IconKind.Cpu),
+            [MetricKind.CpuTotal]);
+
+        var channels = registry.RegisterChannels(cpu, MetricKind.CpuTotal, 8);
+
+        Assert.Equal(8, channels.Count);
+        Assert.Equal(8, cpu.Channels.Count);
+        Assert.Single(cpu.Kinds);                                   // 종류는 늘지 않는다
+        Assert.DoesNotContain(cpu.SlotOf(MetricKind.CpuTotal), channels);
+        Assert.Equal(8, channels.Distinct().Count());               // 서로 다른 슬롯
+    }
+
+    [Fact]
+    public void Re_registering_the_same_channel_count_changes_nothing()
+    {
+        var registry = new MetricRegistry(64);
+        var cpu = registry.Register(
+            new DeviceInfo("cpu", DeviceClass.System, "CPU", "테스트 CPU", IconKind.Cpu),
+            [MetricKind.CpuTotal]);
+
+        var first = registry.RegisterChannels(cpu, MetricKind.CpuTotal, 8).ToArray();
+        int settled = registry.Revision;
+        int slots = registry.SlotCount;
+
+        var again = registry.RegisterChannels(cpu, MetricKind.CpuTotal, 8);
+
+        Assert.Equal(first, again);
+        Assert.Equal(settled, registry.Revision);
+        Assert.Equal(slots, registry.SlotCount);
+    }
+
+    [Fact]
+    public void Purging_a_device_reclaims_its_channel_slots_too()
+    {
+        // 빠뜨리면 장치가 빠질 때마다 슬롯이 코어 수만큼 샌다 — 핫플러그를 반복하면 드러난다.
+        var registry = new MetricRegistry(64);
+        var gpu = registry.Register(Gpu("luid:1", "A"), [MetricKind.GpuUtil]);
+        registry.RegisterChannels(gpu, MetricKind.GpuUtil, 4);
+
+        int before = registry.SlotCount;
+
+        registry.Retire("luid:1", DateTime.UtcNow.Ticks);
+        Assert.Equal(1, registry.PurgeRetired(DateTime.UtcNow.Ticks, TimeSpan.Zero));
+
+        // 슬롯은 회수되어 재사용 대기열로 간다. 다시 등록하면 새로 늘지 않아야 한다.
+        var again = registry.Register(Gpu("luid:2", "B"), [MetricKind.GpuUtil]);
+        registry.RegisterChannels(again, MetricKind.GpuUtil, 4);
+
+        Assert.Equal(before, registry.SlotCount);
+    }
+
+    [Fact]
     public void A_device_that_comes_back_after_being_retired_advances_the_revision()
     {
         var registry = new MetricRegistry(64);

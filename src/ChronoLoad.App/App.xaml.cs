@@ -42,7 +42,7 @@ public partial class App : Application
         // PDH·GlobalMemoryStatusEx 초기화는 밀리초 단위라 창을 띄우기 전에 마쳐도 된다.
         var gpu = new GpuProvider();
         foreach (ISensorProvider provider in
-                 new ISensorProvider[] { new CpuProvider(), new MemoryProvider(), new NetworkProvider(),
+                 new ISensorProvider[] { new CpuProvider(), new CoreProvider(), new MemoryProvider(), new NetworkProvider(),
                                          new DiskProvider(), gpu })
             _engine.AddProviderAsync(provider).AsTask().GetAwaiter().GetResult();
 
@@ -254,10 +254,22 @@ public partial class App : Application
         var registry = new MetricRegistry();
         var random = new Random(20260923);
 
+        // 오버레이의 코어 미니 바(§5.1)를 센서 없이도 확인할 수 있게 채널을 붙인다.
+        // 한두 코어만 물린 모양과 고르게 퍼진 모양이 구분되는지가 이 막대의 존재 이유다.
+        // 성능 4 + 효율 8 하이브리드로 두어 등급 구분(틈과 캡션)도 함께 확인한다.
+        const int Cores = 12;
         var cpu = registry.Register(
             new DeviceInfo("cpu", DeviceClass.System, "CPU",
-                "Intel Core Ultra 7 270K · 논리 코어 24", IconKind.Cpu),
+                "Intel Core Ultra 7 270K · 논리 코어 12", IconKind.Cpu)
+            {
+                Extra = new Dictionary<string, string>
+                {
+                    ["coreEfficiencyClasses"] = "1,1,1,1,0,0,0,0,0,0,0,0",
+                },
+            },
             [MetricKind.CpuTotal]);
+
+        var coreSlots = registry.RegisterChannels(cpu, MetricKind.CpuTotal, Cores);
 
         var memory = registry.Register(
             new DeviceInfo("memory", DeviceClass.System, "메모리 32G",
@@ -310,6 +322,13 @@ public partial class App : Application
             gpuValue = Math.Clamp(gpuValue + random.NextDouble() * 18 - 9 + Math.Sin(phase * 0.9) * 6, 5, 100);
 
             frame[cpu.SlotOf(MetricKind.CpuTotal)] = (float)cpuValue;
+
+            // 코어 0~1 은 늘 물려 있고 나머지는 총 사용률을 따라 흩어진다 — 단일 스레드 병목이
+            // 막대 모양으로 드러나는지 보기 위한 배치다. 마지막 코어는 파킹(값 없음)으로 둔다.
+            for (int c = 0; c < Cores; c++)
+                frame[coreSlots[c]] = c == Cores - 1 ? float.NaN
+                    : (float)Math.Clamp(c < 2 ? 88 + random.NextDouble() * 12
+                                              : cpuValue + random.NextDouble() * 40 - 20, 0, 100);
             frame[memory.SlotOf(MetricKind.MemUsed)] = (float)(memRatio * TotalMemory);
             frame[memory.SlotOf(MetricKind.MemCommit)] = (float)(Math.Min(0.99, memRatio + 0.08) * TotalMemory);
             frame[net.SlotOf(MetricKind.NetRx)] = (float)rx;

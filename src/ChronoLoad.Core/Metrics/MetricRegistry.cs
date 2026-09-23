@@ -47,7 +47,19 @@ public sealed class DeviceHandle
     /// <summary>등록되지 않은 종류면 −1.</summary>
     public int SlotOf(MetricKind kind) => _slots.TryGetValue(kind, out int s) ? s : -1;
 
-    internal IEnumerable<int> Slots => _slots.Values;
+    /// <summary>
+    /// 같은 종류의 값을 여러 개 쓰는 장치의 부가 슬롯. 지금은 CPU 코어별 사용률이 유일하다.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="MetricKind"/> 하나에 슬롯 하나라는 규칙을 깨지 않으려고 따로 둔다 — 코어를
+    /// 지표 종류로 세면 <c>CpuCore0..63</c> 같은 열거가 생기고, 그 순간 MCP 의 지표 목록과
+    /// 카드의 축 선택이 전부 코어 수에 휘둘린다. 채널은 <b>오버레이에서만</b> 읽힌다.
+    /// </remarks>
+    public IReadOnlyList<int> Channels { get; private set; } = [];
+
+    internal void SetChannels(int[] channels) => Channels = channels;
+
+    internal IEnumerable<int> Slots => _slots.Values.Concat(Channels);
 
     /// <summary>제거 예정 시각(UTC ticks). 살아 있으면 null.</summary>
     internal long? RetiredAtUtcTicks { get; set; }
@@ -72,6 +84,10 @@ public sealed class MetricRegistry
     private readonly List<int> _freeSlots = [];
     private readonly Dictionary<string, DeviceHandle> _devices = [];
     private readonly Dictionary<MetricId, int> _slotByMetric = [];
+
+    // 채널 슬롯은 MetricId 로 찾을 수 없다. 분위수 버킷 배치를 고를 때 종류가 필요하므로
+    // 여기 따로 적어둔다 — 없으면 기본값(0)으로 떨어져 사용률과 바이트가 같은 눈금을 쓰게 된다.
+    private readonly Dictionary<int, MetricKind> _channelKinds = [];
     // 통계는 스코프마다 한 벌씩. 시계열은 공유하고 "언제부터 세는가"만 나뉜다.
     private readonly StatsAccumulator[][] _stats =
         [new StatsAccumulator[16], new StatsAccumulator[16]];
@@ -163,6 +179,39 @@ public sealed class MetricRegistry
     }
 
     /// <summary>
+    /// 장치에 채널 슬롯을 붙인다. 같은 수로 다시 부르면 아무것도 하지 않는다.
+    /// </summary>
+    /// <param name="kind">값의 종류. 단위가 같아야 하므로 코어 사용률은 <see cref="MetricKind.CpuTotal"/> 이다.</param>
+    /// <remarks>
+    /// 장치 등록과 분리한 이유는 채널을 붙이는 쪽이 장치를 등록한 쪽과 다르기 때문이다 —
+    /// 총 사용률은 Fast 티어, 코어별은 Slow 티어라 프로바이더가 나뉜다(§6.1).
+    /// </remarks>
+    public IReadOnlyList<int> RegisterChannels(DeviceHandle device, MetricKind kind, int count)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(count);
+
+        lock (_gate)
+        {
+            if (device.Channels.Count == count) return device.Channels;
+
+            foreach (int old in device.Channels) ReleaseSlot(old);
+
+            var slots = new int[count];
+            for (int i = 0; i < count; i++)
+            {
+                slots[i] = AllocateSlot();
+                _channelKinds[slots[i]] = kind;
+            }
+
+            device.SetChannels(slots);
+
+            // 슬롯 수가 바뀌면 샘플 엔진이 버퍼를 다시 잡아야 한다.
+            Volatile.Write(ref _revision, _revision + 1);
+            return slots;
+        }
+    }
+
+    /// <summary>
     /// 장치가 사라졌다고 표시한다. 시리즈와 통계는 남겨두고 <see cref="PurgeRetired"/>에서 회수한다.
     /// </summary>
     public void Retire(string key, long nowUtcTicks)
@@ -194,15 +243,13 @@ public sealed class MetricRegistry
                 foreach (var kind in handle.Kinds.ToArray())
                 {
                     int slot = handle.SlotOf(kind);
-                    _series[slot] = null;
-                    for (int scope = 0; scope < StatsScopes.Count; scope++)
-                    {
-                        _stats[scope][slot] = default;
-                        if (slot < _percentiles[scope].Count) _percentiles[scope][slot] = null;
-                    }
-                    _freeSlots.Add(slot);
+                    ReleaseSlot(slot);
                     _slotByMetric.Remove(new MetricId(kind, handle.Index));
                 }
+
+                // 채널도 같이 회수한다. 빠뜨리면 장치가 빠질 때마다 슬롯이 코어 수만큼 샌다.
+                foreach (int slot in handle.Channels) ReleaseSlot(slot);
+                handle.SetChannels([]);
 
                 _devices.Remove(key);
                 purged++;
@@ -257,7 +304,12 @@ public sealed class MetricRegistry
         if (channel[slot] is { } existing) return existing;
         if (_series[slot] is null) return null;
 
-        var kind = _slotByMetric.FirstOrDefault(p => p.Value == slot).Key.Kind;
+        // 채널 슬롯은 MetricId 에 없으므로 먼저 본다. 이 순서가 뒤바뀌면 조회가 기본값(0)으로
+        // 떨어져 코어 사용률이 바이트 눈금을 쓰게 된다 — 값은 나오는데 분위수만 조용히 틀린다.
+        var kind = _channelKinds.TryGetValue(slot, out var channelKind)
+            ? channelKind
+            : _slotByMetric.FirstOrDefault(p => p.Value == slot).Key.Kind;
+
         var tracker = kind.Unit() switch
         {
             MetricUnit.Percent => PercentileTracker.ForPercent(),
@@ -370,6 +422,22 @@ public sealed class MetricRegistry
                     _stats[scope][i].Add(values[i]);
             }
         }
+    }
+
+    /// <summary>슬롯 하나를 비우고 재사용 대기열에 넣는다. 시리즈·통계·분위수를 모두 지운다.</summary>
+    private void ReleaseSlot(int slot)
+    {
+        if ((uint)slot >= (uint)_series.Count) return;
+
+        _series[slot] = null;
+        for (int scope = 0; scope < StatsScopes.Count; scope++)
+        {
+            _stats[scope][slot] = default;
+            if (slot < _percentiles[scope].Count) _percentiles[scope][slot] = null;
+        }
+
+        _channelKinds.Remove(slot);
+        _freeSlots.Add(slot);
     }
 
     private int AllocateSlot()
