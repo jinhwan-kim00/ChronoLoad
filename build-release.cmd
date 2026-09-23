@@ -39,8 +39,10 @@ for /f "delims=" %%V in ('powershell -NoProfile -Command ^
     "([xml](Get-Content Directory.Build.props)).Project.PropertyGroup.Version"') do set VERSION=%%V
 if "%VERSION%"=="" set VERSION=0.0.0
 
-set STAGE=dist\stage
-set OUTPUT=dist\ChronoLoad-%VERSION%-%TAG%.zip
+rem 푼 폴더를 결과물로 남긴다. 압축본만 내면 이 PC 에서 바로 쓰려는 사람이 매번 풀어야 하고,
+rem 바로가기를 걸 자리도 없다. 폴더 이름은 zip 과 같은 줄기라 무엇을 실행 중인지 알 수 있다.
+set STAGE=dist\ChronoLoad-%VERSION%-%TAG%
+set OUTPUT=%STAGE%.zip
 
 echo.
 echo   ChronoLoad %VERSION%  (%MODE%)
@@ -51,6 +53,16 @@ rem 만들 것만 지운다. dist 를 통째로 비우면 앞서 만든 다른 �
 set STEP=준비
 if exist "%STAGE%" rmdir /s /q "%STAGE%"
 if exist "%OUTPUT%" del /q "%OUTPUT%"
+
+rem 지워지지 않았다면 그 폴더에서 앱이 돌고 있을 가능성이 높다. 바로가기로 쓰기 시작하면
+rem 흔한 상황이라, 뒤에서 엉뚱한 오류로 터지기 전에 여기서 분명히 말한다.
+if exist "%STAGE%" (
+    set STEP=이전 결과 폴더를 지울 수 없음
+    echo.
+    echo   %STAGE% 를 지울 수 없다. 그 폴더의 ChronoLoad.exe 가 실행 중인지 확인한다.
+    goto :fail
+)
+
 mkdir "%STAGE%" || goto :fail
 
 rem 단일 파일로 묶는다. 자체 포함일 때는 네이티브 라이브러리까지 넣어야 진짜 한 개가 된다.
@@ -83,15 +95,20 @@ copy /y "%STAGE%\bridge\chronoload-mcp.exe" "%STAGE%\chronoload-mcp.exe" >nul ||
 copy /y README.md "%STAGE%\README.md" >nul || goto :fail
 rmdir /s /q "%STAGE%\app" "%STAGE%\bridge"
 
+rem 푼 폴더는 지우지 않는다. 압축은 그 폴더를 그대로 담는다.
 powershell -NoProfile -Command ^
     "Compress-Archive -Path '%STAGE%\*' -DestinationPath '%OUTPUT%' -Force" || goto :fail
-rmdir /s /q "%STAGE%"
 
 for %%F in ("%OUTPUT%") do set SIZE=%%~zF
 set /a SIZE_MB=%SIZE% / 1048576
 
 echo.
-echo   완료: %OUTPUT%  (%SIZE_MB% MB)
+echo   완료
+echo     배포용 : %OUTPUT%  (%SIZE_MB% MB)
+echo     실행용 : %STAGE%\ChronoLoad.exe
+echo.
+echo   이 PC 에서 그냥 쓰려면 위 실행 파일에 바로가기를 만든다.
+echo   다시 빌드하면 그 폴더를 지웠다 새로 만드므로, 실행 중이면 먼저 닫는다.
 echo.
 if defined KEEPOPEN pause
 endlocal
