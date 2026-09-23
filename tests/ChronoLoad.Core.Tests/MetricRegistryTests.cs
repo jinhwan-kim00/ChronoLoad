@@ -61,6 +61,68 @@ public class MetricRegistryTests
     }
 
     [Fact]
+    public void Re_registering_an_unchanged_device_does_not_advance_the_revision()
+    {
+        // §5.7 의 검증 재열거는 장치가 안 바뀌어도 30초마다 돈다. 그때마다 리비전이 오르면
+        // "devicesRevision 만 비교하면 구성이 그대로인지 알 수 있다"(§10.3)가 거짓말이 된다.
+        // 실기기에서 실제로 30초마다 1씩 올라가고 있었다.
+        var registry = new MetricRegistry(64);
+        registry.Register(Net("guid:1", "Wi-Fi"), [MetricKind.NetRx, MetricKind.NetTx]);
+
+        int settled = registry.Revision;
+
+        for (int i = 0; i < 5; i++)
+            registry.Register(Net("guid:1", "Wi-Fi"), [MetricKind.NetRx, MetricKind.NetTx]);
+
+        Assert.Equal(settled, registry.Revision);
+    }
+
+    [Fact]
+    public void A_renamed_device_does_advance_the_revision()
+    {
+        // 반대쪽도 지켜야 한다. Wi-Fi 링크 속도가 바뀌면 카드 이름이 바뀌므로,
+        // 캐시를 들고 있는 에이전트는 다시 물어봐야 한다.
+        var registry = new MetricRegistry(64);
+        registry.Register(Net("guid:1", "Wi-Fi 2.4G"), [MetricKind.NetRx]);
+
+        int settled = registry.Revision;
+        registry.Register(Net("guid:1", "Wi-Fi 1.2G"), [MetricKind.NetRx]);
+
+        Assert.True(registry.Revision > settled);
+    }
+
+    [Fact]
+    public void Extra_fields_count_as_a_change_even_though_the_record_compares_by_reference()
+    {
+        var registry = new MetricRegistry(64);
+        var before = Gpu("luid:1", "Arc") with { Extra = new Dictionary<string, string> { ["vendorId"] = "0x8086" } };
+        var same = Gpu("luid:1", "Arc") with { Extra = new Dictionary<string, string> { ["vendorId"] = "0x8086" } };
+        var after = Gpu("luid:1", "Arc") with { Extra = new Dictionary<string, string> { ["vendorId"] = "0x10DE" } };
+
+        registry.Register(before, [MetricKind.GpuUtil]);
+        int settled = registry.Revision;
+
+        registry.Register(same, [MetricKind.GpuUtil]);          // 사전은 새 인스턴스지만 내용이 같다
+        Assert.Equal(settled, registry.Revision);
+
+        registry.Register(after, [MetricKind.GpuUtil]);
+        Assert.True(registry.Revision > settled);
+    }
+
+    [Fact]
+    public void A_device_that_comes_back_after_being_retired_advances_the_revision()
+    {
+        var registry = new MetricRegistry(64);
+        registry.Register(Net("guid:1", "Wi-Fi"), [MetricKind.NetRx]);
+        registry.Retire("guid:1", DateTime.UtcNow.Ticks);
+
+        int retired = registry.Revision;
+        registry.Register(Net("guid:1", "Wi-Fi"), [MetricKind.NetRx]);
+
+        Assert.True(registry.Revision > retired);
+    }
+
+    [Fact]
     public void Retiring_keeps_history_so_a_quick_reconnect_does_not_lose_the_benchmark()
     {
         // Wi-Fi 를 껐다 켜거나 드라이버가 재시작됐다고 리셋 이후 통계가 날아가면 안 된다.

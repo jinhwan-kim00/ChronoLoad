@@ -36,13 +36,19 @@ internal static class MetricReader
     /// 이 장치의 지표 중 하나라도 한참 갱신되지 않았는가. 장치 단위로 판단하는 이유는
     /// 에이전트가 "이 GPU 값이 지금 것인가"를 묻지 슬롯 단위로 묻지 않기 때문이다.
     /// </summary>
+    /// <remarks>
+    /// <b>한 번도 측정된 적 없는 지표는 세지 않는다.</b> 그것은 늦은 값이 아니라 없는 값이고,
+    /// 응답에서 이미 <c>null</c> 로 그렇게 말하고 있다. 여기에 섞으면 값이 멀쩡히 들어오는
+    /// 어댑터가 영영 <c>stale</c> 로 보인다 — 온도 센서를 0개로 돌려주는 내장 GPU 에서
+    /// 실제로 그랬고, 에이전트는 멀쩡한 사용률까지 의심하게 된다.
+    /// </remarks>
     public static bool IsStale(McpContext ctx, DeviceHandle device)
     {
         foreach (var kind in device.Kinds)
         {
             int slot = device.SlotOf(kind);
             var series = ctx.Registry.Series(slot);
-            if (series is null || series.Count == 0) continue;
+            if (series is null || series.Count == 0 || !series.HasMeasurement) continue;
 
             if (series.SamplesSinceMeasurement > StaleAfterSamples) return true;
         }
@@ -95,7 +101,13 @@ internal static class MetricReader
     /// 시계열을 min-max 데시메이션으로 줄인다. 평균으로 줄이면 순간 스파이크가 사라지는데,
     /// GPU 워크로드 분석에서 사라지면 안 되는 것이 바로 그 스파이크다.
     /// </summary>
-    public static (double[] Values, int Span) History(
+    /// <remarks>
+    /// <b>값이 없는 샘플은 <c>null</c> 로 내보낸다.</b> 시리즈는 측정되지 않은 구간을 <c>NaN</c> 으로
+    /// 들고 있는데, JSON 에는 <c>NaN</c> 을 쓸 수 없어 직렬화가 통째로 예외를 던진다 — 슬롯은
+    /// 등록됐지만 한 번도 측정되지 않은 지표(PDH 만 붙은 어댑터의 온도 등)에서는 툴 호출 자체가
+    /// 실패했다. 0 으로 바꾸는 것은 더 나쁘다. §10.4 의 "값이 없으면 null" 을 여기서도 지킨다.
+    /// </remarks>
+    public static (double?[] Values, int Span) History(
         McpContext ctx, int slot, int windowSamples, int maxPoints)
     {
         var series = ctx.Registry.Series(slot);
@@ -108,11 +120,18 @@ internal static class MetricReader
 
         var source = window.AsSpan(0, copied);
         if (copied <= maxPoints)
-            return (source.ToArray().Select(v => (double)v).ToArray(), 1);
+            return (Project(source), 1);
 
         var reduced = new float[maxPoints];
         int produced = MetricSeries.Decimate(source, reduced);
-        return (reduced.AsSpan(0, produced).ToArray().Select(v => (double)v).ToArray(),
+        return (Project(reduced.AsSpan(0, produced)),
                 (int)Math.Ceiling((double)copied / Math.Max(1, produced)));
+
+        static double?[] Project(ReadOnlySpan<float> values)
+        {
+            var result = new double?[values.Length];
+            for (int i = 0; i < values.Length; i++) result[i] = McpJsonHelpers.Finite(values[i]);
+            return result;
+        }
     }
 }

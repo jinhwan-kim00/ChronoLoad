@@ -33,6 +33,24 @@ public class AdaptiveBackoffTests
     }
 
     [Fact]
+    public async Task Battery_saver_pace_halves_the_sample_rate()
+    {
+        // §6.3 의 "배터리 + 절전 → Fast ×2". 이 경로는 실기기에서 아직 한 번도 실행된 적이 없다
+        // (§12) — 배터리 절전 상태를 만들지 못해서다. 감지는 못 묶어도 **효과**는 여기서 묶어둔다.
+        // 그래야 남은 미검증 구간이 "GetSystemPowerStatus 가 절전을 알려주는가" 하나로 좁혀진다.
+        var registry = new MetricRegistry(seriesCapacity: 32);
+        await using var engine = new SampleEngine(registry, Options());
+
+        engine.RequestedPace = SamplePace.Reduced;
+
+        Assert.Equal(SamplePace.Reduced, engine.EffectivePace);
+        Assert.Equal(TimeSpan.FromMilliseconds(500), engine.EffectiveFastPeriod);
+
+        engine.RequestedPace = SamplePace.Full;
+        Assert.Equal(TimeSpan.FromMilliseconds(250), engine.EffectiveFastPeriod);
+    }
+
+    [Fact]
     public async Task A_slow_provider_pushes_the_engine_down_a_step()
     {
         var registry = new MetricRegistry(seriesCapacity: 32);

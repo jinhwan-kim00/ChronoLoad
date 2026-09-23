@@ -3,7 +3,13 @@ using System.Text.Json.Nodes;
 
 namespace ChronoLoad.Core.Settings;
 
-/// <summary>창의 마지막 위치와 크기. 모두 없으면 첫 실행이다.</summary>
+/// <summary>
+/// 창의 마지막 위치와 크기. 모두 없으면 첫 실행이다.
+/// </summary>
+/// <remarks>
+/// <b>단위는 물리 픽셀이다.</b> DIP 로 두면 모니터마다 배율이 다를 때 복원 위치가 어긋난다
+/// (<c>Monitors.MoveTo</c> 참조). 모니터 작업 영역도 같은 단위라 그대로 비교할 수 있다.
+/// </remarks>
 public readonly record struct WindowPlacement(double Left, double Top, double Width, double Height)
 {
     public bool IsValid => Width > 0 && Height > 0;
@@ -24,7 +30,19 @@ public readonly record struct WindowPlacement(double Left, double Top, double Wi
 /// </remarks>
 public sealed class AppSettings
 {
-    public const int CurrentSchemaVersion = 1;
+    /// <summary>
+    /// 2 — 창 위치의 단위가 DIP 에서 물리 픽셀로 바뀌었다.
+    /// </summary>
+    /// <remarks>
+    /// 옛 값을 환산해서 이어쓸 수는 없다. DIP 는 <i>저장 당시 창이 놓였던 모니터</i>의 배율로
+    /// 나눈 값인데, 그 모니터가 어느 것이었는지는 파일에 남아 있지 않다. 그래서 1 로 적힌
+    /// 창 위치는 버리고 장치 구성에서 다시 계산한다 — 한 번만 자리를 잃는 쪽이,
+    /// 매번 어긋난 자리에 뜨는 것보다 낫다.
+    /// </remarks>
+    public const int CurrentSchemaVersion = 2;
+
+    /// <summary>창 위치를 물리 픽셀로 적기 시작한 스키마 버전.</summary>
+    private const int PixelPlacementSchemaVersion = 2;
 
     private static readonly JsonSerializerOptions Format = new() { WriteIndented = true };
 
@@ -54,10 +72,7 @@ public sealed class AppSettings
 
             settings._raw = root;
 
-            if (root["window"] is JsonObject w &&
-                Read(w, "left") is { } left && Read(w, "top") is { } top &&
-                Read(w, "width") is { } width && Read(w, "height") is { } height)
-                settings.Window = new WindowPlacement(left, top, width, height);
+            settings.Window = ReadPlacement(root);
 
             settings.Topmost = root["topmost"]?.GetValue<bool>() ?? false;
 
@@ -74,6 +89,23 @@ public sealed class AppSettings
         }
 
         return settings;
+    }
+
+    /// <summary>
+    /// 저장된 창 위치를 읽는다. 스키마가 <see cref="PixelPlacementSchemaVersion"/> 보다 오래됐으면
+    /// 버린다 — 값은 멀쩡해 보이지만 단위가 DIP 라, 그대로 쓰면 배율이 다른 모니터에서 어긋난다.
+    /// </summary>
+    internal static WindowPlacement? ReadPlacement(JsonObject root)
+    {
+        if ((root["schemaVersion"]?.GetValue<int>() ?? 0) < PixelPlacementSchemaVersion) return null;
+
+        if (root["window"] is not JsonObject w) return null;
+
+        if (Read(w, "left") is not { } left || Read(w, "top") is not { } top ||
+            Read(w, "width") is not { } width || Read(w, "height") is not { } height)
+            return null;
+
+        return new WindowPlacement(left, top, width, height);
     }
 
     private static double? Read(JsonObject o, string name) =>
@@ -100,6 +132,12 @@ public sealed class AppSettings
                     ["width"] = placement.Width,
                     ["height"] = placement.Height,
                 };
+            else
+                // 읽을 때 버린 옛 스키마의 좌표가 파일에 그대로 남아 있다. 지우지 않으면
+                // 이번 저장이 schemaVersion 을 올리는 순간 그 DIP 값이 픽셀로 되살아난다 —
+                // 창을 최소화한 채로 끄면 새 좌표가 없어서 실제로 그 경로를 탄다.
+                // 모르는 키는 보존하지만 이건 우리 키다.
+                _raw.Remove("window");
 
             var collapsed = new JsonObject();
             foreach (var (key, value) in Collapsed) collapsed[key] = value;

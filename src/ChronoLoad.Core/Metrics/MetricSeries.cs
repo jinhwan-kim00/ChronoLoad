@@ -55,6 +55,13 @@ public sealed class MetricSeries
     }
 
     /// <summary>
+    /// 한 번이라도 실측된 적이 있는가. 거짓이면 이 지표는 <b>늦은 것이 아니라 없는 것</b>이다 —
+    /// 슬롯은 등록됐지만 이 기기에서 그 센서가 값을 내주지 않는 경우다(온도 센서를 0개로
+    /// 돌려주는 내장 GPU, PDH 만 붙은 어댑터의 전력·클럭).
+    /// </summary>
+    public bool HasMeasurement => Volatile.Read(ref _lastMeasuredIndex) >= 0;
+
+    /// <summary>
     /// 마지막 실측 이후 흘러간 샘플 수. 0이면 방금 측정됐다는 뜻이고,
     /// Slow 티어(1000ms/250ms)라면 정상 범위가 0~3이다. 이 값으로 <c>stale</c>을 판정한다.
     /// </summary>

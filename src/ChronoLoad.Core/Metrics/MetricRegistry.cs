@@ -127,9 +127,17 @@ public sealed class MetricRegistry
         {
             if (_devices.TryGetValue(info.Key, out var existing))
             {
+                // 재열거는 장치가 안 바뀌어도 30초마다 돈다(§5.7). 같은 장치를 같은 내용으로
+                // 다시 등록하는 것은 "장치 구성 변경"이 아니다 — 여기서 무조건 올리면
+                // devicesRevision 이 30초마다 증가해서, 그 값만 비교하면 구성이 그대로인지
+                // 알 수 있다는 §10.3 의 약속이 깨진다. 실제로 그렇게 깨져 있었다.
+                bool returned = existing.RetiredAtUtcTicks is not null;
+                bool described = existing.Info.HasSameDescription(info);
+
                 existing.RetiredAtUtcTicks = null;
                 existing.Info = info;          // 이름·아이콘은 갱신, 데이터는 유지
-                Volatile.Write(ref _revision, _revision + 1);
+
+                if (returned || !described) Volatile.Write(ref _revision, _revision + 1);
                 return existing;
             }
 

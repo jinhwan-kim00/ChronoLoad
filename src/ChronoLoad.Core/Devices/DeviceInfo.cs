@@ -61,5 +61,28 @@ public sealed record DeviceInfo(
     public IReadOnlyDictionary<string, string> Extra { get; init; } =
         new Dictionary<string, string>(0);
 
+    /// <summary>표시 내용이 같은가.</summary>
+    /// <remarks>
+    /// <b><c>record</c> 의 기본 같음 비교로는 판단할 수 없다.</b> <see cref="Extra"/> 가 사전이라
+    /// 내용이 같아도 참조가 다르면 다른 것으로 나온다. 재열거는 매번 새 사전을 만들므로
+    /// 기본 비교를 쓰면 "항상 바뀌었다"가 되고, 그 판정이 곧 <c>devicesRevision</c> 으로 새어 나간다.
+    /// </remarks>
+    public bool HasSameDescription(DeviceInfo other)
+    {
+        if (ReferenceEquals(this, other)) return true;
+
+        if (Key != other.Key || Class != other.Class || Icon != other.Icon
+            || ShortName != other.ShortName || FullName != other.FullName || Vendor != other.Vendor)
+            return false;
+
+        if (Extra.Count != other.Extra.Count) return false;
+
+        foreach (var (key, value) in Extra)
+            if (!other.Extra.TryGetValue(key, out string? theirs) || theirs != value)
+                return false;
+
+        return true;
+    }
+
     public override string ToString() => $"{Class}:{ShortName}";
 }

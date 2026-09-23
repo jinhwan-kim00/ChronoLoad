@@ -122,6 +122,60 @@ public class AppSettingsTests
         Assert.Empty(settings.Collapsed);
     }
 
+    [Fact]
+    public void A_placement_written_before_the_pixel_schema_is_discarded()
+    {
+        using var temp = new TempHome();
+
+        // schemaVersion 1 의 좌표는 DIP 다. 저장 당시 창이 어느 모니터에 있었는지가 파일에
+        // 남아 있지 않아 환산할 수 없다. 그대로 쓰면 배율이 다른 모니터에서 어긋난 자리에 뜨는데,
+        // 그 자리도 대개 어느 모니터 안이라 "화면 밖" 검사에도 걸리지 않는다.
+        Directory.CreateDirectory(AppSettings.Directory);
+        File.WriteAllText(AppSettings.FilePath, """
+            { "schemaVersion": 1, "topmost": true,
+              "window": { "left": 1680, "top": 34, "width": 340, "height": 724 } }
+            """);
+
+        var loaded = AppSettings.Load();
+
+        Assert.Null(loaded.Window);
+        Assert.True(loaded.Topmost);     // 위치 말고는 버릴 이유가 없다
+    }
+
+    [Fact]
+    public void An_old_placement_does_not_come_back_as_pixels_when_the_schema_is_bumped()
+    {
+        using var temp = new TempHome();
+
+        // 창을 최소화한 채로 끄면 새 좌표가 없어 Window 가 null 인 채로 저장된다.
+        // 그때 옛 DIP 좌표를 남겨두면, 올라간 schemaVersion 이 그 값을 픽셀로 둔갑시킨다.
+        Directory.CreateDirectory(AppSettings.Directory);
+        File.WriteAllText(AppSettings.FilePath, """
+            { "schemaVersion": 1, "window": { "left": 1680, "top": 34, "width": 340, "height": 724 } }
+            """);
+
+        var loaded = AppSettings.Load();
+        Assert.Null(loaded.Window);
+        loaded.Save();
+
+        Assert.Null(JsonNode.Parse(File.ReadAllText(AppSettings.FilePath))!["window"]);
+        Assert.Null(AppSettings.Load().Window);
+    }
+
+    [Fact]
+    public void A_placement_written_with_the_current_schema_survives()
+    {
+        using var temp = new TempHome();
+
+        Directory.CreateDirectory(AppSettings.Directory);
+        File.WriteAllText(AppSettings.FilePath, $$"""
+            { "schemaVersion": {{AppSettings.CurrentSchemaVersion}},
+              "window": { "left": 2940, "top": 60, "width": 595, "height": 1267 } }
+            """);
+
+        Assert.Equal(new WindowPlacement(2940, 60, 595, 1267), AppSettings.Load().Window);
+    }
+
     /// <summary>테스트가 실제 사용자 설정을 건드리지 않도록 LOCALAPPDATA 를 임시 폴더로 돌린다.</summary>
     private sealed class TempHome : IDisposable
     {

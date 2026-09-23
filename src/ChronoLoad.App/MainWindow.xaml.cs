@@ -331,10 +331,14 @@ public partial class MainWindow : Window
             return;
         }
 
-        Left = saved.Left;
-        Top = saved.Top;
-        Width = saved.Width;
-        Height = saved.Height;
+        // 저장값은 물리 픽셀이다. WPF 의 Left/Top 에 넣으면 지금 창이 놓인 모니터의 배율로
+        // 환산돼 배율이 다른 모니터에서 어긋난다 — SetWindowPos 로 환산 없이 놓는다.
+        nint handle = new System.Windows.Interop.WindowInteropHelper(this).Handle;
+        if (!Monitors.MoveTo(handle, saved))
+        {
+            ResuggestWindowHeight(recenter: true);
+            return;
+        }
 
         if (IsRestoredPlacementUsable()) return;
 
@@ -377,8 +381,11 @@ public partial class MainWindow : Window
     private void SaveSettings()
     {
         // 최소화 상태의 좌표를 저장하면 다음 실행에서 창이 엉뚱한 곳에 뜬다.
-        if (WindowState == WindowState.Normal && Width > 0 && Height > 0)
-            _settings.Window = new WindowPlacement(Left, Top, Width, Height);
+        // 자리는 GetWindowRect 로 받은 물리 픽셀을 적는다 — Left/Top 은 DIP 이고,
+        // 그 환산 배율은 창이 놓인 모니터마다 다르다(§11).
+        if (WindowState == WindowState.Normal && Width > 0 && Height > 0 &&
+            Monitors.RectOf(new System.Windows.Interop.WindowInteropHelper(this).Handle) is { } rect)
+            _settings.Window = rect;
 
         _settings.Topmost = Topmost;
 

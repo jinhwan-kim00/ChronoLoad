@@ -35,6 +35,13 @@ public class McpToolTests
     private static JsonElement Json(object value) =>
         JsonSerializer.SerializeToElement(value);
 
+    /// <summary>
+    /// 센서가 값을 내주지 않은 틱. 시리즈에는 NaN 이 기록되지만 <b>실측으로는 세지 않는다</b> —
+    /// 실기기에서 온도 슬롯이 이 상태로 남는다(§5.4 계층 B 가 온도 센서를 0개로 돌려주는 경우).
+    /// </summary>
+    private static void PushWithMissingTemperature(MetricRegistry registry, float util) =>
+        registry.CommitAll([0f, util, 0f, float.NaN], [true, true, true, false]);
+
     [Fact]
     public void Every_response_carries_the_devices_revision()
     {
@@ -126,6 +133,59 @@ public class McpToolTests
         Assert.Contains(values, v => v >= 99);      // 스파이크가 살아남아야 한다
         Assert.Equal("percent", result.GetProperty("unit").GetString());
         Assert.Equal(slot, gpu.SlotOf(MetricKind.GpuUtil));
+    }
+
+    [Fact]
+    public void History_reports_never_measured_samples_as_null_instead_of_failing()
+    {
+        // 슬롯은 등록됐지만 값이 한 번도 들어오지 않는 지표가 있다 — PDH 만 붙은 어댑터의 온도,
+        // 온도 센서를 0개로 돌려주는 내장 GPU 가 그렇다. 시리즈에는 NaN 이 쌓이는데
+        // JSON 에는 NaN 을 쓸 수 없어서, 툴 호출이 통째로 예외로 끝나고 있었다.
+        var (ctx, registry, gpu) = Build();
+
+        for (int i = 0; i < 120; i++) PushWithMissingTemperature(registry, 5f);
+
+        var result = Json(new ChronoLoadTools(ctx).GetMetricHistory(
+            "GpuTemp", deviceKey: gpu.Key, windowSeconds: 30, maxPoints: 8));
+
+        var values = result.GetProperty("values").EnumerateArray().ToArray();
+
+        Assert.NotEmpty(values);
+        Assert.All(values, v => Assert.Equal(JsonValueKind.Null, v.ValueKind));   // 0 이 아니라 null 이다
+        Assert.Equal("celsius", result.GetProperty("unit").GetString());
+    }
+
+    [Fact]
+    public void A_metric_that_never_reports_does_not_make_the_whole_adapter_look_stale()
+    {
+        // 내장 GPU 는 온도 센서를 0개로 돌려준다. 그 슬롯이 영영 비어 있다고 해서 사용률·메모리까지
+        // 오래된 값으로 보이면, 에이전트는 멀쩡한 값을 의심하고 다시 묻는다.
+        var (ctx, registry, _) = Build();
+
+        for (int i = 0; i < 40; i++) PushWithMissingTemperature(registry, 20f);
+
+        var adapter = Json(new ChronoLoadTools(ctx).GetGpuStatus())
+            .GetProperty("adapters")[0];
+
+        Assert.False(adapter.GetProperty("stale").GetBoolean());
+        Assert.Equal(JsonValueKind.Null, adapter.GetProperty("temperatureCelsius").ValueKind);
+    }
+
+    [Fact]
+    public void History_keeps_the_measured_values_when_only_part_of_the_window_is_missing()
+    {
+        // 센서가 잠깐 끊겼다고 그 앞뒤의 멀쩡한 값까지 잃으면 안 된다.
+        var (ctx, registry, gpu) = Build();
+
+        for (int i = 0; i < 30; i++) registry.PushFrame([0f, 5f, 0f, 55f]);
+        for (int i = 0; i < 30; i++) PushWithMissingTemperature(registry, 5f);
+
+        var values = Json(new ChronoLoadTools(ctx).GetMetricHistory(
+                "GpuTemp", deviceKey: gpu.Key, windowSeconds: 30, maxPoints: 200))
+            .GetProperty("values").EnumerateArray().ToArray();
+
+        Assert.Contains(values, v => v.ValueKind == JsonValueKind.Null);
+        Assert.Contains(values, v => v.ValueKind == JsonValueKind.Number && v.GetDouble() == 55);
     }
 
     [Fact]

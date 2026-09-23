@@ -55,6 +55,13 @@ internal static partial class Monitors
     [LibraryImport("user32.dll", EntryPoint = "MonitorFromWindow")]
     private static partial nint MonitorFromWindow(nint window, int flags);
 
+    [LibraryImport("user32.dll", EntryPoint = "SetWindowPos")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool SetWindowPos(nint window, nint after, int x, int y, int cx, int cy, uint flags);
+
+    private const uint SwpNoZOrder = 0x0004;
+    private const uint SwpNoActivate = 0x0010;
+
     /// <summary>모니터별 작업 영역(작업표시줄 제외), 물리 픽셀.</summary>
     public static IReadOnlyList<WindowPlacement> WorkAreas()
     {
@@ -82,6 +89,43 @@ internal static partial class Monitors
     {
         if (window == 0 || !GetWindowRect(window, out var r)) return null;
         return new WindowPlacement(r.Left, r.Top, r.Right - r.Left, r.Bottom - r.Top);
+    }
+
+    /// <summary>
+    /// 창을 물리 픽셀 좌표에 그대로 놓는다.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>WPF 의 <c>Left</c>/<c>Top</c> 으로 복원하면 배율이 다른 모니터에서 어긋난다.</b>
+    /// 그 값은 DIP 이고, DIP↔픽셀 환산에 쓰이는 배율은 <i>창이 지금 놓여 있는</i> 모니터의 것이다.
+    /// 200% 모니터에서 뜬 창에 175% 모니터에서 저장한 DIP 좌표를 넣으면 창이 실제 자리보다
+    /// 멀리 간다(실측: 420px). 그 자리가 여전히 어느 모니터 안이면 화면 밖 검사도 통과해 버려
+    /// 아무도 눈치채지 못한다. 여기서는 환산을 아예 하지 않는다.
+    /// </para>
+    /// <para>
+    /// <b>두 번 놓는다.</b> 배율이 다른 모니터로 넘어가는 첫 호출은 <c>WM_DPICHANGED</c> 를 일으키고,
+    /// WPF 는 그 처리에서 창을 새 배율에 맞춰 다시 잡는다 — 방금 준 픽셀 크기가 배율비만큼
+    /// 줄어든다(실측: 200%→175% 로 옮길 때 595×1267 이 525×1109 가 됐다). 두 번째 호출은
+    /// 이미 같은 배율 안이라 아무것도 일으키지 않고 크기만 제자리로 돌려놓는다.
+    /// </para>
+    /// </remarks>
+    public static bool MoveTo(nint window, WindowPlacement rect)
+    {
+        if (window == 0 || !rect.IsValid) return false;
+        if (!Place(window, rect)) return false;
+
+        if (RectOf(window) is { } placed && Differs(placed, rect)) Place(window, rect);
+        return true;
+
+        static bool Place(nint window, WindowPlacement rect) => SetWindowPos(window, 0,
+            (int)Math.Round(rect.Left), (int)Math.Round(rect.Top),
+            (int)Math.Round(rect.Width), (int)Math.Round(rect.Height),
+            SwpNoZOrder | SwpNoActivate);
+
+        // 반올림 한 픽셀 차이로 다시 놓지는 않는다.
+        static bool Differs(WindowPlacement a, WindowPlacement b) =>
+            Math.Abs(a.Left - b.Left) > 1 || Math.Abs(a.Top - b.Top) > 1
+            || Math.Abs(a.Width - b.Width) > 1 || Math.Abs(a.Height - b.Height) > 1;
     }
 
     /// <summary>어떤 모니터에도 걸치지 않는가. 겹침이 0 일 때만 참이다.</summary>
