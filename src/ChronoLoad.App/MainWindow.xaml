@@ -1,6 +1,7 @@
 <Window x:Class="ChronoLoad.App.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
         Title="ChronoLoad"
         Width="340" Height="620"
         MinWidth="300" MinHeight="420" MaxWidth="420"
@@ -8,6 +9,21 @@
         Background="{DynamicResource Brush.Bg}"
         UseLayoutRounding="True" SnapsToDevicePixels="True"
         TextOptions.TextFormattingMode="Ideal">
+
+  <!--
+    WindowStyle="None" 만으로는 창 위쪽 5dip 이 비클라이언트로 남고, DWM 이 그 띠를 기본
+    프레임 색으로 칠한다 — 다크 테마에서 타이틀바 위에 흰 줄로 보인다(실측: 물리 10px,
+    타이틀바 밑줄이 34dip 이 아니라 39dip 에 찍혔다).
+    GlassFrameThickness="0" 으로 그 띠를 없애 클라이언트가 창 전체를 덮게 한다.
+    CaptionHeight="0" 인 이유는 끌기를 TitleBar 의 DragMove 로 직접 처리하기 때문이다 —
+    0 이 아니면 시스템 캡션이 그 영역을 먼저 가져가 버튼 클릭이 먹지 않는다.
+  -->
+  <shell:WindowChrome.WindowChrome>
+    <shell:WindowChrome CaptionHeight="0"
+                        GlassFrameThickness="0"
+                        ResizeBorderThickness="6"
+                        UseAeroCaptionButtons="False"/>
+  </shell:WindowChrome.WindowChrome>
 
   <Window.Resources>
     <!-- 타이틀바 아이콘 버튼. 텍스트 없이 16px 글리프만 -->
@@ -47,7 +63,15 @@
     <!-- 타이틀바 : 앱 이름 텍스트 없음. 리셋·경과 시간·창 조작이 한 줄에 들어간다 -->
     <Grid x:Name="TitleBar" Grid.Row="0" Background="Transparent">
       <Border BorderThickness="0,0,0,1" BorderBrush="{DynamicResource Brush.Line}"/>
-      <DockPanel Margin="9,0,6,0" LastChildFill="False">
+      <!--
+        상단 6dip 은 WindowChrome 의 리사이즈 테두리라 기본적으로 클릭을 창 크기 조절로 가져간다.
+        버튼은 타이틀바 안에서 세로 가운데 정렬(위쪽이 6dip)이라 그 띠와 정확히 맞닿는다 —
+        표시만으로는 멀쩡해 보이는데 버튼 윗변이 안 눌리는 상태가 된다.
+        DockPanel 에만 표시해서 버튼은 전부 눌리고, 버튼 사이 빈 곳으로는 여전히 위에서 잡아
+        크기를 조절할 수 있게 둔다.
+      -->
+      <DockPanel Margin="9,0,6,0" LastChildFill="False"
+                 shell:WindowChrome.IsHitTestVisibleInChrome="True">
         <ContentControl x:Name="BrandHost" DockPanel.Dock="Left" VerticalAlignment="Center"
                         Margin="0,0,9,0"/>
         <Button x:Name="ResetButton" Width="26" Height="26" DockPanel.Dock="Left"
