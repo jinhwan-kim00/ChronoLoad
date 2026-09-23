@@ -168,9 +168,14 @@ public sealed class AboutWindow : Window
             Foreground = Brush(palette.Cpu),
             TextDecorations = null,
         };
-        hyperlink.RequestNavigate += (_, e) => Open(e.Uri.ToString());
+        // NavigateUri 를 주면 클릭 한 번에 Click 과 RequestNavigate 가 모두 오른다.
+        // 둘 다 처리하면 브라우저 탭이 두 개 열린다 — 하나만 받는다.
         hyperlink.NavigateUri = new Uri(url);
-        hyperlink.Click += (_, _) => Open(url);
+        hyperlink.RequestNavigate += (_, e) =>
+        {
+            Open(e.Uri.ToString());
+            e.Handled = true;
+        };
 
         text.Inlines.Add(hyperlink);
         text.Cursor = Cursors.Hand;
