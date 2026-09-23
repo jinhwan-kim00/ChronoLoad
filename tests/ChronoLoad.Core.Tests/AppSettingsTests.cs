@@ -33,6 +33,35 @@ public class AppSettingsTests
     }
 
     [Fact]
+    public void A_window_in_the_gap_between_two_monitors_is_rejected()
+    {
+        // 왼쪽 아래 1080p + 오른쪽 위 4K 처럼 어긋난 배치. 둘을 감싸는 경계 상자에는
+        // 어떤 모니터도 없는 빈 구역이 생긴다. 경계 상자만 보면 "화면 안"으로 판정되지만
+        // 복원하면 아무 데도 보이지 않는다.
+        WindowPlacement[] monitors =
+        [
+            new(0, 1080, 1920, 1080),        // 왼쪽 아래
+            new(1920, 0, 3840, 2160),        // 오른쪽 위
+        ];
+
+        // 경계 상자(0,0 ~ 5760,2160) 안이지만 실제로는 어느 모니터에도 없는 자리.
+        Assert.False(AppSettings.IsOnScreen(new WindowPlacement(400, 200, 340, 700), monitors));
+
+        // 각 모니터 위에서는 당연히 통과한다.
+        Assert.True(AppSettings.IsOnScreen(new WindowPlacement(400, 1200, 340, 700), monitors));
+        Assert.True(AppSettings.IsOnScreen(new WindowPlacement(2200, 200, 340, 700), monitors));
+    }
+
+    [Fact]
+    public void A_window_spanning_two_monitors_is_accepted()
+    {
+        WindowPlacement[] monitors = [new(0, 0, 1920, 1080), new(1920, 0, 1920, 1080)];
+
+        // 경계에 걸친 창은 양쪽에서 보인다. 되살리지 않을 이유가 없다.
+        Assert.True(AppSettings.IsOnScreen(new WindowPlacement(1800, 300, 340, 700), monitors));
+    }
+
+    [Fact]
     public void A_zero_sized_window_is_rejected()
     {
         Assert.False(AppSettings.IsOnScreen(new WindowPlacement(0, 0, 0, 0), [Screen]));

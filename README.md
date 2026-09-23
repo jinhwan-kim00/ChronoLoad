@@ -122,6 +122,20 @@ claude mcp add chronoload -- <저장소>\tools\ChronoLoad.McpBridge\bin\Debug\ne
 - **읽기 전용이 원칙.** 상태를 바꾸는 툴은 `reset_stats` 하나뿐이고,
   프로세스 종료·우선순위 변경 같은 것은 제공하지 않는다
 
+## 배포 패키지 만들기
+
+```cmd
+build-release              :: 자체 포함 — 받는 사람이 .NET 을 설치하지 않아도 된다
+build-release framework    :: 런타임 의존 — 작지만 .NET 10 데스크톱 런타임이 필요하다
+```
+
+`dist\ChronoLoad-<버전>-<종류>.zip` 이 만들어진다. 안에는 실행 파일, MCP 브리지, 이 README 가 들어 있다.
+
+| 종류 | 크기 | 받는 사람에게 필요한 것 |
+|---|---:|---|
+| 자체 포함 | 약 122 MB | 없음 |
+| 런타임 의존 | 약 1.8 MB | [.NET 10 데스크톱 런타임](https://dotnet.microsoft.com/download/dotnet/10.0) |
+
 ## 문서
 
 - [PROJECT.md](PROJECT.md) — 설계서. 요구사항부터 구현에서 막혔던 지점까지

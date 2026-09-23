@@ -324,29 +324,47 @@ public partial class MainWindow : Window
     /// </remarks>
     private void RestorePlacement()
     {
-        var screens = ScreenRects();
-
-        if (_settings.Window is { } saved && AppSettings.IsOnScreen(saved, screens))
+        if (_settings.Window is not { IsValid: true } saved)
         {
-            Left = saved.Left;
-            Top = saved.Top;
-            Width = saved.Width;
-            Height = saved.Height;
+            // 첫 실행 창 높이는 장치 구성에서 계산한다 — 고정값은 기기마다 맞지 않는다.
+            ResuggestWindowHeight(recenter: true);
             return;
         }
 
-        // 첫 실행 창 높이는 장치 구성에서 계산한다 — 고정값은 기기마다 맞지 않는다.
+        Left = saved.Left;
+        Top = saved.Top;
+        Width = saved.Width;
+        Height = saved.Height;
+
+        if (IsRestoredPlacementUsable()) return;
+
+        ChronoLoad.Sensors.SensorLog.Write("저장된 창 위치를 쓸 수 없어 기본 위치로 되돌린다");
         ResuggestWindowHeight(recenter: true);
     }
 
-    /// <summary>가상 데스크톱 좌표의 화면 영역들. WPF 는 작업 영역 하나만 알려주므로 그것으로 근사한다.</summary>
-    private static IReadOnlyList<WindowPlacement> ScreenRects()
+    /// <summary>
+    /// 복원한 자리가 지금 모니터 배치에서 실제로 쓸 수 있는지 본다.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>창을 실제로 옮겨 놓고 Windows 에게 묻는다.</b> 저장된 DIP 좌표를 픽셀로 환산해
+    /// 직접 계산하면 모니터마다 배율이 다를 때 어긋난다. 이미 배치된 창의 사각형을
+    /// <c>GetWindowRect</c> 로 받으면 그 환산을 Windows 가 한 뒤의 값이라 틀릴 여지가 없다.
+    /// </para>
+    /// <para>
+    /// 모서리만 걸친 것도 못 쓴다 — 제목 표시줄을 잡을 수 없으면 옮길 수도 닫을 수도 없다.
+    /// </para>
+    /// </remarks>
+    private bool IsRestoredPlacementUsable()
     {
-        var virtualScreen = new WindowPlacement(
-            SystemParameters.VirtualScreenLeft, SystemParameters.VirtualScreenTop,
-            SystemParameters.VirtualScreenWidth, SystemParameters.VirtualScreenHeight);
+        nint handle = new System.Windows.Interop.WindowInteropHelper(this).Handle;
+        if (handle == 0) return true;               // 아직 판단할 수 없다. 그대로 둔다.
 
-        return [virtualScreen];
+        if (Monitors.IsOffAllMonitors(handle)) return false;
+        if (Monitors.RectOf(handle) is not { } rect) return true;
+
+        var areas = Monitors.WorkAreas();
+        return areas.Count == 0 || AppSettings.IsOnScreen(rect, areas);
     }
 
     /// <summary>창을 옮기거나 카드를 접을 때마다 부른다. 실제 저장은 디바운스된다.</summary>
@@ -375,17 +393,19 @@ public partial class MainWindow : Window
         if (_cards.Count == 0) return;
 
         var specs = _cards.Select(ToSpec).ToArray();
-        double workArea = SystemParameters.WorkArea.Height;
-        double target = LayoutEngine.SuggestWindowHeight(specs, workAreaHeight: workArea);
+        var work = SystemParameters.WorkArea;
+        double target = LayoutEngine.SuggestWindowHeight(specs, workAreaHeight: work.Height);
 
         if (recenter)
         {
-            Height = target;
-            Top = Math.Max(0, (workArea - Height) / 2);
+            // 가로도 함께 되돌린다. 세로만 옮기면 쓸 수 없는 자리에서 복귀했을 때
+            // 창이 여전히 화면 밖 가로 좌표에 남는다 — 실제로 그렇게 남겨뒀었다.
+            Height = Math.Min(target, work.Height);
+            Top = work.Top + Math.Max(0, (work.Height - Height) / 2);
+            Left = work.Left + Math.Max(0, (work.Width - Width) / 2);
             return;
         }
 
-        // 프리셋이 창을 줄여둔 상태라면 사용자의 선택이므로 건드리지 않는다.
         if (Math.Abs(Height - target) < 1) return;
 
         AnimateWindowHeight(target);
