@@ -30,10 +30,21 @@ public sealed class CardView : Border
     private readonly TextBlock _badgeText;
     private readonly TextBlock _label;
     private readonly ChartSurface _spark;
+
+    /// <summary>스파크라인과 메모리 미터를 함께 담는다. 접힘 여부를 이 하나로 켠다.</summary>
+    private readonly Grid _sparkHost;
+
+    /// <summary>메모리 미터. 채움 칸과 빈 칸을 비율대로 나눠 폭 계산 없이 그린다.</summary>
+    private readonly Grid _meterTrack;
+    private readonly Border _meterFill;
+
     private readonly System.Windows.Shapes.Path _chevron;
     private readonly RotateTransform _chevronRotation = new(0);
     private readonly TextBlock _value;
     private readonly TextBlock _unit;
+
+    /// <summary>큰 숫자 옆의 보조 수치. GPU 카드의 <c>12/22G</c> 가 여기 들어간다.</summary>
+    private readonly TextBlock _subValue;
     private readonly ChartSurface _chart;
     /// <summary>헤더 높이. 값 글꼴의 줄 상자를 여기에 맞춘다.</summary>
     private const double HeaderHeight = 26;
@@ -136,18 +147,52 @@ public sealed class CardView : Border
         Grid.SetColumn(labelRow, 1);
         header.Children.Add(labelRow);
 
+        // 퍼센트 지표는 스파크라인도 0~100 에 고정한다. 상대 스케일로 그리면 3% 대에서
+        // 미세하게 흔들리는 것과 90% 대에서 흔들리는 것이 같은 모양으로 나와, 접힌 카드에서
+        // "지금 바쁜가"를 오히려 잘못 읽게 된다. 접힌 카드는 그 판단 하나를 위해 있다.
+        // 전송률처럼 상한이 없는 지표는 절대 축을 쓰면 늘 바닥에 붙으므로 상대 스케일 그대로 둔다.
+        bool percentScale = model.DisplayUnit == MetricUnit.Percent && model.FixedMax > 0;
+        bool hasMeter = model.MemoryDedicated is not null && model.MemoryCapacity > 0;
+
         _spark = new ChartSurface
         {
             Mode = ChartMode.Sparkline,
-            Scale = ScaleMode.PeakRelative,
+            Scale = percentScale ? ScaleMode.Fixed : ScaleMode.PeakRelative,
+            FixedMax = model.FixedMax,
             Series = model.Primary,
+            Height = hasMeter ? 12 : 18,
+            VerticalAlignment = VerticalAlignment.Bottom,
+        };
+
+        // 메모리 미터. 사용률은 시간축을 가진 꺾은선이고 메모리 점유는 지금 한 값이라,
+        // 같은 그림에 겹치면 둘 다 읽기 어렵다. 꺾은선 위에 가로 바로 따로 얹는다.
+        // 형태도 이쪽이 맞다 — 한계값 대비 단일 비율은 미터가 읽기 쉽고, 2조각 파이는 그렇지 않다.
+        _meterFill = new Border { CornerRadius = new CornerRadius(2) };
+        _meterTrack = new Grid
+        {
+            Height = 4,
+            VerticalAlignment = VerticalAlignment.Top,
+            ColumnDefinitions =
+            {
+                new ColumnDefinition { Width = new GridLength(0, GridUnitType.Star) },
+                new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) },
+            },
+        };
+        _meterTrack.Children.Add(_meterFill);
+
+        var sparkHost = new Grid
+        {
             Height = 18,
             Margin = new Thickness(7, 0, 7, 0),
             VerticalAlignment = VerticalAlignment.Center,
             Visibility = Visibility.Collapsed,
         };
-        Grid.SetColumn(_spark, 2);
-        header.Children.Add(_spark);
+        if (hasMeter) sparkHost.Children.Add(_meterTrack);
+        sparkHost.Children.Add(_spark);
+
+        _sparkHost = sparkHost;
+        Grid.SetColumn(sparkHost, 2);
+        header.Children.Add(sparkHost);
 
         _chevron = new System.Windows.Shapes.Path
         {
@@ -206,8 +251,26 @@ public sealed class CardView : Border
             VerticalAlignment = VerticalAlignment.Bottom,
             Text = "%",
         };
+
+        // 사용률과 메모리는 성질이 다르다. 같은 크기로 나란히 두면 어느 쪽을 먼저 봐야 할지
+        // 알 수 없고, 26px 로 둘을 한 줄에 넣으면 라벨과 스파크라인 자리를 다 먹는다.
+        // 큰 숫자는 사용률 하나로 두고 메모리는 한 단계 아래에 붙인다.
+        //
+        // 단위(`%`)와 같은 11px·Dim 으로 두면 값이 아니라 장식으로 읽힌다 — 이건 읽으라고
+        // 놓은 숫자다. 14px 에 SemiBold 로 올리고 색도 Label 까지 끌어올린다.
+        _subValue = new TextBlock
+        {
+            FontFamily = MonoFont,
+            FontSize = 14,
+            FontWeight = FontWeights.SemiBold,
+            Margin = new Thickness(6, 0, 0, 2),
+            VerticalAlignment = VerticalAlignment.Bottom,
+            Visibility = Visibility.Collapsed,
+        };
+
         valuePanel.Children.Add(_value);
         valuePanel.Children.Add(_unit);
+        valuePanel.Children.Add(_subValue);
         Grid.SetColumn(valuePanel, 4);
         header.Children.Add(valuePanel);
 
@@ -226,6 +289,7 @@ public sealed class CardView : Border
             MemoryDedicated = model.MemoryDedicated,
             MemoryShared = model.MemoryShared,
             DedicatedCapacity = model.DedicatedCapacity,
+            SharedCapacity = model.SharedCapacity,
             IsDiscrete = model.IsDiscrete,
         };
         Grid.SetRow(_chart, 1);
@@ -318,8 +382,13 @@ public sealed class CardView : Border
         _chevron.Stroke = Frozen(palette.Faint);
         _value.Foreground = Frozen(palette.Fg);
         _unit.Foreground = Frozen(palette.Dim);
+        _subValue.Foreground = Frozen(palette.Label);
         _footer.Foreground = Frozen(palette.Dim);
-        _scale.Foreground = Frozen(palette.Faint);
+
+        // 스케일 힌트는 보통 "축이 어디까지인지" 알려주는 보조라 가장 흐린 단계다.
+        // GPU 카드에서만은 그 자리가 메모리 **전체 크기**를 말하므로 읽을 값이다 —
+        // Faint 로 두면 사용량과 짝지어 읽히지 않는다.
+        _scale.Foreground = Frozen(Model.MemoryDedicated is not null ? palette.Dim : palette.Faint);
 
         _chart.Accent = accent;
         _chart.Palette = palette;
@@ -356,7 +425,7 @@ public sealed class CardView : Border
     /// 여럿(GPU 4장·디스크 2장·NIC 2장)이면 접힌 줄을 구분할 수 없었다.
     /// </remarks>
     private void UpdateSparkVisibility() =>
-        _spark.Visibility = _collapsed ? Visibility.Visible : Visibility.Collapsed;
+        _sparkHost.Visibility = _collapsed ? Visibility.Visible : Visibility.Collapsed;
 
     public void ApplyCollapsed(bool collapsed, bool animate)
     {
@@ -467,6 +536,38 @@ public sealed class CardView : Border
         _overlay.Margin = new Thickness(left, 2, 0, 0);
     }
 
+    /// <summary>
+    /// GPU 카드의 메모리 요약 — 헤더의 <c>12/22G</c> 와 접힌 카드의 미터.
+    /// </summary>
+    /// <remarks>
+    /// 미터는 채움 칸과 빈 칸의 별 비율로만 그린다. 실제 폭을 재서 그리면 창 크기가 바뀔 때마다
+    /// 다시 계산해야 하고, 그 타이밍이 레이아웃과 어긋나면 한 프레임씩 튄다.
+    /// 넘친 경우 비율을 1 로 자른다 — 막대가 칸을 넘어 삐져나오게 두면 "얼마나 넘었나"가
+    /// 아니라 "레이아웃이 깨졌나"로 읽힌다. 넘겼다는 사실은 색이 말한다.
+    /// </remarks>
+    private void UpdateMemoryHeadline()
+    {
+        if (Model.MemoryHeadline(_chart.ScrubIndex) is not { } memory)
+        {
+            _subValue.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        _subValue.Text = memory.Text;
+        _subValue.Visibility = Visibility.Visible;
+
+        double filled = Math.Clamp(memory.Ratio, 0, 1);
+        _meterTrack.ColumnDefinitions[0].Width = new GridLength(filled, GridUnitType.Star);
+        _meterTrack.ColumnDefinitions[1].Width = new GridLength(1 - filled, GridUnitType.Star);
+
+        var palette = ThemeService.Instance.Palette;
+        var fill = memory.Over ? palette.Warn : Model.Accent(palette);
+
+        _meterFill.Background = Frozen(fill);
+        // 빈 칸은 회색이 아니라 같은 색의 옅은 단계다. 그래야 막대 전체가 한 상태로 읽힌다.
+        _meterTrack.Background = Frozen(Color.FromArgb(0x33, fill.R, fill.G, fill.B));
+    }
+
     public void Refresh(MetricRegistry registry)
     {
         // 전원 상태는 장치가 스스로 오르내린다. 매 갱신에 따라간다.
@@ -475,6 +576,7 @@ public sealed class CardView : Border
         var formatted = Model.HeaderValue(_chart.ScrubIndex);
         _value.Text = formatted.Value;
         _unit.Text = formatted.Unit;
+        UpdateMemoryHeadline();
 
         if (Model.Collapsed)
         {

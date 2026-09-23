@@ -8,6 +8,12 @@ using ChronoLoad.Core.Metrics;
 
 namespace ChronoLoad.App.ViewModels;
 
+/// <summary>GPU 카드 헤더의 메모리 요약.</summary>
+/// <param name="Text">예 <c>12/22G</c>. 사용량과 용량을 한 덩어리로 읽는다.</param>
+/// <param name="Ratio">용량 대비 사용 비율. 넘치면 1 을 넘는다 — 자르는 것은 그리는 쪽이 한다.</param>
+/// <param name="Over">용량을 넘겼는가. 미터의 색이 이 값을 따른다.</param>
+public readonly record struct GpuMemorySummary(string Text, double Ratio, bool Over);
+
 /// <summary>카드 하나가 무엇을 어떻게 그릴지. 값은 갖지 않고 <see cref="MetricRegistry"/>를 그때그때 읽는다.</summary>
 public sealed class CardViewModel
 {
@@ -24,6 +30,9 @@ public sealed class CardViewModel
 
     /// <summary>전용 VRAM 용량. 0이면 용량선을 그리지 않는다.</summary>
     public double DedicatedCapacity { get; init; }
+
+    /// <summary>공유 메모리 한도. 내장 GPU 의 고정 축 상한이다. 0이면 축을 고정하지 않는다.</summary>
+    public double SharedCapacity { get; init; }
 
     public bool IsDiscrete { get; init; }
 
@@ -74,11 +83,51 @@ public sealed class CardViewModel
 
     public FormattedValue HeaderValue(int? scrubIndex = null)
     {
-        float value = scrubIndex is { } index ? SampleAt(Primary, index) : Primary.Latest;
+        float value = Read(Primary, scrubIndex);
         return float.IsNaN(value)
             ? new FormattedValue("—", string.Empty)
             : MetricFormatter.Format(DisplayUnit, value * DisplayFactor);
     }
+
+    /// <summary>"얼마나 찼는가"를 셀 때의 분모. 외장은 전용 VRAM, 내장은 공유 한도. 모르면 0.</summary>
+    public double MemoryCapacity =>
+        GpuMemoryAxis.CapacityReference(IsDiscrete, DedicatedCapacity, SharedCapacity);
+
+    /// <summary>
+    /// 헤더에 사용률과 나란히 붙는 메모리 요약과, 접힌 카드의 미터가 쓸 비율.
+    /// </summary>
+    /// <remarks>
+    /// <b>큰 숫자는 사용률로 되돌렸다.</b> 메모리 용량으로 바꿔보니 카드를 접었을 때
+    /// "지금 바쁜가"가 사라졌다 — 접힌 카드가 답해야 할 질문이 바로 그것이다.
+    /// 둘 다 필요하므로 사용률은 큰 숫자로, 메모리는 작은 글씨와 미터로 함께 보여준다.
+    /// </remarks>
+    public GpuMemorySummary? MemoryHeadline(int? scrubIndex = null)
+    {
+        if (MemoryDedicated is null) return null;
+
+        double capacity = MemoryCapacity;
+        if (capacity <= 0) return null;
+
+        float dedicated = Read(MemoryDedicated, scrubIndex);
+        float shared = Read(MemoryShared, scrubIndex);
+
+        // 한쪽만 없는 것은 0 으로 세지만, 둘 다 없으면 값이 없는 것이다.
+        if (float.IsNaN(dedicated) && float.IsNaN(shared)) return null;
+
+        double used = (float.IsNaN(dedicated) ? 0 : dedicated) + (float.IsNaN(shared) ? 0 : shared);
+
+        // 헤더에는 쓴 양만 적는다. 전체 크기는 카드마다 바뀌지 않는 값이라 매 갱신마다
+        // 눈에 들어올 이유가 없고, 하단 스케일 힌트에 이미 자리가 있다.
+        // 비율은 미터가 말하므로 숫자로 또 말할 필요도 없다.
+        var usedText = MetricFormatter.Format(MetricUnit.Bytes, used);
+
+        return new GpuMemorySummary($"{usedText.Value}{usedText.Unit}", used / capacity, used > capacity);
+    }
+
+    private static float Read(MetricSeries? series, int? scrubIndex) =>
+        series is null ? float.NaN
+        : scrubIndex is { } index ? SampleAt(series, index)
+        : series.Latest;
 
     /// <summary>표시 창 안의 인덱스로 값을 읽는다. 창은 항상 최근 <paramref name="window"/>개다.</summary>
     public static float SampleAt(MetricSeries series, int index, int window = 240)
@@ -173,9 +222,17 @@ public sealed class CardViewModel
     public MetricUnit? ScaleHintUnit { get; init; }
 
     /// <summary>축 상한 힌트. 차트가 실제로 쓴 값을 받아 표시한다.</summary>
+    /// <remarks>
+    /// <b>GPU 메모리만 축 상한이 아니라 용량을 적는다.</b> 이 자리가 답해야 할 것은
+    /// "전체가 얼마인가"이고, GPU 메모리에서 그것은 축 상한이 아니라 용량이다.
+    /// 둘은 넘치는 동안에만 갈라지는데, 그때는 용량선이 차트 안에 파선으로 보이므로
+    /// 이 숫자가 그 선을 가리키는 것으로 읽힌다 — 오히려 축 상한을 적는 쪽이 짝이 없다.
+    /// </remarks>
     public string ScaleText(double axisMax)
     {
-        if (MemoryDedicated is not null) return MetricFormatter.Format(MetricUnit.Bytes, axisMax).ToString();
+        if (MemoryDedicated is not null)
+            return MetricFormatter.Format(MetricUnit.Bytes,
+                MemoryCapacity > 0 ? MemoryCapacity : axisMax).ToString();
         if (ScaleHintUnit is { } hint) return MetricFormatter.Format(hint, axisMax).ToString();
         return DisplayUnit == MetricUnit.Percent ? "100%" : MetricFormatter.Format(DisplayUnit, axisMax).ToString();
     }

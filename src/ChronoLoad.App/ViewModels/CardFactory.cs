@@ -114,6 +114,8 @@ public static class CardFactory
         bool isNpu = device.Info.Extra.GetValueOrDefault("computeOnly") == "true";
         double capacity = double.TryParse(device.Info.Extra.GetValueOrDefault("dedicatedBytes"), out var bytes)
             ? bytes : 0;
+        double sharedCapacity = double.TryParse(device.Info.Extra.GetValueOrDefault("sharedBytes"), out var shared)
+            ? shared : 0;
 
         int computeSlot = device.SlotOf(MetricKind.GpuCompute);
         int dedicatedSlot = device.SlotOf(MetricKind.GpuDedicated);
@@ -138,6 +140,7 @@ public static class CardFactory
             Power = powerSlot >= 0 ? registry.Series(powerSlot) : null,
             Clock = clockSlot >= 0 ? registry.Series(clockSlot) : null,
             DedicatedCapacity = capacity,
+            SharedCapacity = sharedCapacity,
             IsDiscrete = discrete,
             IsNpu = isNpu,
             Icon = Icons.For(device.Info.Icon),

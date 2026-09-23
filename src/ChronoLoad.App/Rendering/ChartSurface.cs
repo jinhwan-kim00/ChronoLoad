@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Media;
 using ChronoLoad.App.Services;
+using ChronoLoad.Core.Layout;
 using ChronoLoad.Core.Metrics;
 
 namespace ChronoLoad.App.Rendering;
@@ -113,6 +114,9 @@ public sealed class ChartSurface : FrameworkElement
 
     /// <summary>전용 VRAM 용량. 0이면 용량선을 그리지 않는다.</summary>
     public double DedicatedCapacity { get; set; }
+
+    /// <summary>공유 메모리 한도. 내장 GPU 의 고정 축 상한이다. 0이면 축을 고정하지 않는다.</summary>
+    public double SharedCapacity { get; set; }
 
     /// <summary>외장 GPU만 용량선과 스필오버 경고를 갖는다. 내장은 공유 메모리를 쓰는 게 정상이다.</summary>
     public bool IsDiscrete { get; set; }
@@ -336,11 +340,9 @@ public sealed class ChartSurface : FrameworkElement
             if (total > peak) peak = total;
         }
 
-        // 축 상한을 "전용+공유 합계"로 잡으면 VRAM 이 꽉 찼는지가 높이로 드러나지 않는다.
-        // 용량선을 상단 근처에 고정해 "선에 닿았다 / 넘었다"를 형태만으로 읽게 한다.
-        double axisMax = IsDiscrete && DedicatedCapacity > 0
-            ? Math.Max(DedicatedCapacity * 1.15, peak * 1.10)
-            : Math.Max(peak * 1.15, 1);
+        // 축 정책은 그리기가 아니라 판단이라 Core 에 있다(§8.3). 화면 없이 테스트하기 위해서이고,
+        // 외장 GPU 가 없는 기기에서도 외장 규칙을 검증할 수 있어야 하기 때문이다.
+        double axisMax = GpuMemoryAxis.Max(IsDiscrete, DedicatedCapacity, SharedCapacity, peak);
 
         LastAxisMax = axisMax;
         IsSpilling = IsDiscrete && DedicatedCapacity > 0 && _memoryCount > 0
@@ -369,15 +371,22 @@ public sealed class ChartSurface : FrameworkElement
                     ctx.LineTo(new Point(X(i, w), yMem(Value(_dedicated, i))), true, true);
             }
 
-            var hatchColor = IsSpilling ? Palette.Warn : Accent;
+            // 외장에서 공유 메모리가 쓰인다는 것 자체가 전용 VRAM 밖으로 나갔다는 뜻이다.
+            // 전용을 다 채우기 전부터 넘어가는 경우가 많아 "용량선을 넘었을 때"만 경고색을
+            // 쓰면 정작 성능이 떨어지는 구간을 놓친다. 그래서 양과 무관하게 눈에 띄는 색으로
+            // 두고, 얼마나 넘어갔는지는 띠의 높이가 말하게 한다.
+            // 내장은 공유가 정상 경로이므로 평소 색 그대로다 — 상시 경고는 경고를 무의미하게 만든다.
+            var hatchColor = IsDiscrete ? Palette.Warn : Accent;
             dc.DrawGeometry(Hatch(hatchColor, 0x99), null, band);
             DrawPolyline(dc, Next(), Sum(_dedicated, _shared, _memoryCount), _memoryCount, w,
                 v => yMem(v), Pen(hatchColor, 1, 0x88));
         }
 
         // 전용 VRAM 용량선 — 넘으면 시스템 RAM 스필오버. 성능 급락의 가장 흔한 원인이다.
+        // 넘치지 않는 동안에는 축 상한이 곧 이 용량이라 선이 위쪽 끝에 붙는다. 카드가 눌려
+        // 차트가 낮아지면 1.3px 파선의 절반이 잘려 나가므로, 최소 1px 는 안으로 들여 긋는다.
         if (IsDiscrete && DedicatedCapacity > 0)
-            DrawHorizontal(dc, w, yMem((float)DedicatedCapacity),
+            DrawHorizontal(dc, w, Math.Max(yMem((float)DedicatedCapacity), 1),
                 Pen(IsSpilling ? Palette.Warn : Accent, 1.3, IsSpilling ? (byte)0xFF : (byte)0x99, dashed: true));
 
         // Compute 엔진 — AI 워크로드인지 렌더링인지 가른다.
