@@ -71,6 +71,14 @@ dotnet publish src/ChronoLoad.App -c Release -r win-x64
 
 ### 연결
 
+배포 패키지를 쓴다면 압축을 푼 폴더의 `chronoload-mcp.exe` 를 가리키면 된다.
+
+```bash
+claude mcp add chronoload -- <압축을 푼 경로>\chronoload-mcp.exe
+```
+
+소스에서 빌드했다면:
+
 ```bash
 claude mcp add chronoload -- <저장소>\tools\ChronoLoad.McpBridge\bin\Debug\net10.0-windows\chronoload-mcp.exe
 ```
