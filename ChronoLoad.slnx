@@ -1,0 +1,15 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/ChronoLoad.App/ChronoLoad.App.csproj" />
+    <Project Path="src/ChronoLoad.Core/ChronoLoad.Core.csproj" />
+    <Project Path="src/ChronoLoad.Sensors/ChronoLoad.Sensors.csproj" />
+    <Project Path="src/ChronoLoad.Mcp/ChronoLoad.Mcp.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/ChronoLoad.Core.Tests/ChronoLoad.Core.Tests.csproj" />
+  </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/ChronoLoad.Harness/ChronoLoad.Harness.csproj" />
+    <Project Path="tools/ChronoLoad.McpBridge/ChronoLoad.McpBridge.csproj" />
+  </Folder>
+</Solution>

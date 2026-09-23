@@ -1,0 +1,92 @@
+<Window x:Class="ChronoLoad.App.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="ChronoLoad"
+        Width="340" Height="620"
+        MinWidth="300" MinHeight="420" MaxWidth="420"
+        WindowStyle="None" ResizeMode="CanResize"
+        Background="{DynamicResource Brush.Bg}"
+        UseLayoutRounding="True" SnapsToDevicePixels="True"
+        TextOptions.TextFormattingMode="Ideal">
+
+  <Window.Resources>
+    <!-- 타이틀바 아이콘 버튼. 텍스트 없이 16px 글리프만 -->
+    <Style x:Key="ChromeButton" TargetType="Button">
+      <Setter Property="Width" Value="26"/>
+      <Setter Property="Height" Value="22"/>
+      <Setter Property="Background" Value="Transparent"/>
+      <Setter Property="BorderThickness" Value="0"/>
+      <Setter Property="Foreground" Value="{DynamicResource Brush.Dim}"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="Root" Background="{TemplateBinding Background}" CornerRadius="5">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="Root" Property="Background" Value="{DynamicResource Brush.Surface2}"/>
+                <Setter Property="Foreground" Value="{DynamicResource Brush.Fg}"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+  </Window.Resources>
+
+  <Grid>
+    <!-- 크롬은 한 줄이다. 리셋·경과 시간을 타이틀바에 합쳐 전역 바를 없앴다 —
+         구석에 세워 두는 위젯에서 세로 44px 은 카드 하나의 절반이 넘는다. -->
+    <Grid.RowDefinitions>
+      <RowDefinition Height="34"/>
+      <RowDefinition Height="*"/>
+    </Grid.RowDefinitions>
+
+    <!-- 타이틀바 : 앱 이름 텍스트 없음. 리셋·경과 시간·창 조작이 한 줄에 들어간다 -->
+    <Grid x:Name="TitleBar" Grid.Row="0" Background="Transparent">
+      <Border BorderThickness="0,0,0,1" BorderBrush="{DynamicResource Brush.Line}"/>
+      <DockPanel Margin="9,0,6,0" LastChildFill="False">
+        <ContentControl x:Name="BrandHost" DockPanel.Dock="Left" VerticalAlignment="Center"
+                        Margin="0,0,9,0"/>
+        <Button x:Name="ResetButton" Width="26" Height="26" DockPanel.Dock="Left"
+                Background="{DynamicResource Brush.Surface2}" BorderThickness="0" Cursor="Hand"
+                VerticalAlignment="Center">
+          <Button.Template>
+            <ControlTemplate TargetType="Button">
+              <Border x:Name="Root" Background="{TemplateBinding Background}" CornerRadius="8"
+                      BorderThickness="1" BorderBrush="{DynamicResource Brush.Line}">
+                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+              </Border>
+              <ControlTemplate.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                  <Setter TargetName="Root" Property="BorderBrush" Value="{DynamicResource Brush.Fg}"/>
+                </Trigger>
+              </ControlTemplate.Triggers>
+            </ControlTemplate>
+          </Button.Template>
+        </Button>
+
+        <TextBlock x:Name="ElapsedText" DockPanel.Dock="Left" Margin="8,0,0,0"
+                   FontFamily="Cascadia Mono, Consolas" FontSize="13"
+                   VerticalAlignment="Center" Foreground="{DynamicResource Brush.Fg}" Text="00:00"/>
+        <Button x:Name="CloseButton" Style="{StaticResource ChromeButton}" DockPanel.Dock="Right"/>
+        <Button x:Name="MinimizeButton" Style="{StaticResource ChromeButton}" DockPanel.Dock="Right"/>
+        <Button x:Name="ThemeButton" Style="{StaticResource ChromeButton}" DockPanel.Dock="Right"/>
+        <Button x:Name="PinButton" Style="{StaticResource ChromeButton}" DockPanel.Dock="Right"/>
+      </DockPanel>
+    </Grid>
+
+    <!-- 카드 스택 : 스크롤 없음. 공간이 모자라면 자동 접힘이 처리한다 -->
+    <StackPanel x:Name="CardHost" Grid.Row="1" Margin="8"/>
+
+    <!-- 카드의 등장·소멸 자체가 알림이지만, 그것이 보이지 않는 사용자에게는 닿지 않는다.
+         화면을 차지하지 않으면서 스크린 리더에는 읽히도록 라이브 영역 하나를 둔다.
+         Visibility.Collapsed 는 접근성 트리에서도 빠지므로 쓰지 않는다. -->
+    <TextBlock x:Name="LiveRegion" Grid.Row="1" Height="0" Opacity="0"
+               IsHitTestVisible="False" Focusable="False"
+               AutomationProperties.LiveSetting="Polite"/>
+
+  </Grid>
+</Window>

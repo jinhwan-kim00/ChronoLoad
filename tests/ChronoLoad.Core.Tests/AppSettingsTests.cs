@@ -1,0 +1,114 @@
+using System.Text.Json.Nodes;
+using ChronoLoad.Core.Settings;
+
+namespace ChronoLoad.Core.Tests;
+
+/// <summary>§11 설정 영속성. 다음 실행에서 화면이 그대로 돌아오는가.</summary>
+public class AppSettingsTests
+{
+    private static readonly WindowPlacement Screen = new(0, 0, 1920, 1080);
+
+    [Fact]
+    public void A_window_fully_inside_the_screen_is_restored()
+    {
+        Assert.True(AppSettings.IsOnScreen(new WindowPlacement(100, 100, 340, 700), [Screen]));
+    }
+
+    [Fact]
+    public void A_window_on_a_monitor_that_is_gone_is_not_restored()
+    {
+        // 두 번째 모니터에 있던 창. 그 모니터를 뽑으면 좌표가 허공을 가리킨다 —
+        // 그대로 복원하면 사용자는 앱이 실행되지 않았다고 생각한다.
+        Assert.False(AppSettings.IsOnScreen(new WindowPlacement(2200, 300, 340, 700), [Screen]));
+    }
+
+    [Fact]
+    public void A_sliver_hanging_off_the_edge_does_not_count_as_visible()
+    {
+        // 오른쪽 끝에 20px 만 걸친 창. 제목 표시줄을 잡을 수 없으면 되살려도 쓸 수 없다.
+        Assert.False(AppSettings.IsOnScreen(new WindowPlacement(1900, 500, 340, 700), [Screen]));
+
+        // 잡을 수 있을 만큼 걸쳐 있으면 되살린다.
+        Assert.True(AppSettings.IsOnScreen(new WindowPlacement(1700, 500, 340, 700), [Screen]));
+    }
+
+    [Fact]
+    public void A_zero_sized_window_is_rejected()
+    {
+        Assert.False(AppSettings.IsOnScreen(new WindowPlacement(0, 0, 0, 0), [Screen]));
+    }
+
+    [Fact]
+    public void Round_trip_keeps_placement_topmost_and_collapsed_state()
+    {
+        using var temp = new TempHome();
+
+        var saved = AppSettings.Load();
+        saved.Window = new WindowPlacement(120, 80, 340, 720);
+        saved.Topmost = true;
+        saved.Collapsed["gpu:luid_1"] = true;
+        saved.Collapsed["net:guid_2"] = false;
+        saved.Save();
+
+        var loaded = AppSettings.Load();
+
+        Assert.Equal(new WindowPlacement(120, 80, 340, 720), loaded.Window);
+        Assert.True(loaded.Topmost);
+        Assert.True(loaded.Collapsed["gpu:luid_1"]);
+        Assert.False(loaded.Collapsed["net:guid_2"]);
+    }
+
+    [Fact]
+    public void Unknown_keys_survive_a_save()
+    {
+        using var temp = new TempHome();
+
+        // 새 버전이 쓴 파일을 옛 버전이 열었다가 저장하는 상황. 모르는 항목을 지우면
+        // 사용자가 설정한 것이 조용히 사라지고, 새 버전으로 돌아왔을 때야 알아차린다.
+        Directory.CreateDirectory(AppSettings.Directory);
+        File.WriteAllText(AppSettings.FilePath,
+            """{"schemaVersion":1,"topmost":false,"futureOption":{"nested":42}}""");
+
+        var settings = AppSettings.Load();
+        settings.Topmost = true;
+        settings.Save();
+
+        var root = JsonNode.Parse(File.ReadAllText(AppSettings.FilePath))!.AsObject();
+        Assert.Equal(42, root["futureOption"]!["nested"]!.GetValue<int>());
+        Assert.True(root["topmost"]!.GetValue<bool>());
+    }
+
+    [Fact]
+    public void A_corrupt_file_falls_back_to_defaults_instead_of_throwing()
+    {
+        using var temp = new TempHome();
+
+        Directory.CreateDirectory(AppSettings.Directory);
+        File.WriteAllText(AppSettings.FilePath, "{ 이건 JSON 이 아니다");
+
+        var settings = AppSettings.Load();
+
+        Assert.Null(settings.Window);
+        Assert.False(settings.Topmost);
+        Assert.Empty(settings.Collapsed);
+    }
+
+    /// <summary>테스트가 실제 사용자 설정을 건드리지 않도록 LOCALAPPDATA 를 임시 폴더로 돌린다.</summary>
+    private sealed class TempHome : IDisposable
+    {
+        private readonly string? _previous = Environment.GetEnvironmentVariable("LOCALAPPDATA");
+        private readonly string _path = Path.Combine(Path.GetTempPath(), "chronoload-test-" + Guid.NewGuid().ToString("N"));
+
+        public TempHome()
+        {
+            Directory.CreateDirectory(_path);
+            Environment.SetEnvironmentVariable("LOCALAPPDATA", _path);
+        }
+
+        public void Dispose()
+        {
+            Environment.SetEnvironmentVariable("LOCALAPPDATA", _previous);
+            try { Directory.Delete(_path, recursive: true); } catch (IOException) { }
+        }
+    }
+}

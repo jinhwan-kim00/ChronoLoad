@@ -1,0 +1,1313 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ChronoLoad UX 설계서</title>
+<style>
+:root{
+  --page-bg:#0B0E13; --page-surface:#12171F; --page-surface2:#181F29;
+  --page-border:#232B37; --page-text:#E6EDF3; --page-dim:#8B95A3; --page-accent:#FBBF24;
+  --mono: ui-monospace,"Cascadia Mono","SF Mono",Menlo,Consolas,monospace;
+  --sans: "Segoe UI Variable Text","Segoe UI",-apple-system,system-ui,"Malgun Gothic",sans-serif;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{background:var(--page-bg);color:var(--page-text);font-family:var(--sans);font-size:15px;line-height:1.7;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1180px;margin:0 auto;padding:48px 24px 120px}
+header.doc{border-bottom:1px solid var(--page-border);padding-bottom:28px}
+h1{font-size:34px;line-height:1.25;margin:0 0 8px;letter-spacing:-.02em}
+h1 small{display:block;font-size:14px;font-weight:400;color:var(--page-dim);letter-spacing:0;margin-top:10px}
+h2{font-size:22px;margin:64px 0 6px;letter-spacing:-.01em;display:flex;align-items:baseline;gap:12px}
+h2::before{content:attr(data-n);font-family:var(--mono);font-size:13px;color:var(--page-accent);font-weight:600}
+h3{font-size:16px;margin:32px 0 10px}
+p{margin:10px 0;color:#C3CCD6}
+.lead{color:var(--page-dim);margin:0 0 20px;max-width:74ch}
+code{font-family:var(--mono);font-size:.86em;background:var(--page-surface2);border:1px solid var(--page-border);border-radius:4px;padding:1px 5px}
+a{color:#7DD3FC}
+table{border-collapse:collapse;width:100%;margin:16px 0;font-size:14px}
+th,td{border:1px solid var(--page-border);padding:9px 12px;text-align:left;vertical-align:top}
+th{background:var(--page-surface2);font-weight:600}
+td{color:#C3CCD6}
+.panel{background:var(--page-surface);border:1px solid var(--page-border);border-radius:14px;padding:22px;margin:20px 0}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(310px,1fr));gap:18px}
+.note{border-left:3px solid var(--page-accent);background:rgba(251,191,36,.06);padding:12px 16px;border-radius:0 8px 8px 0;margin:16px 0;font-size:14px;color:#D9C9A3}
+.warn{border-left-color:#F87171;background:rgba(248,113,113,.07);color:#E8B9B9}
+.new{display:inline-block;font-family:var(--mono);font-size:10px;letter-spacing:.08em;padding:1px 6px;border-radius:999px;background:rgba(52,211,153,.14);border:1px solid rgba(52,211,153,.4);color:#6EE7B7;vertical-align:3px;margin-left:8px}
+ul,ol{color:#C3CCD6}
+
+.stage{display:flex;gap:56px;flex-wrap:wrap;justify-content:center;align-items:flex-start;
+  background:linear-gradient(0deg,rgba(255,255,255,.02),rgba(255,255,255,.02)),
+    repeating-linear-gradient(0deg,transparent,transparent 23px,rgba(255,255,255,.035) 23px,rgba(255,255,255,.035) 24px),
+    repeating-linear-gradient(90deg,transparent,transparent 23px,rgba(255,255,255,.035) 23px,rgba(255,255,255,.035) 24px);
+  border:1px solid var(--page-border);border-radius:16px;padding:44px 28px;margin:22px 0}
+.stagecol{display:flex;flex-direction:column;align-items:center;gap:14px}
+.stagecap{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--page-dim)}
+
+/* ══ 앱 목업 ══════════════════════════════ */
+.app{width:340px;height:960px;border-radius:14px;overflow:hidden;display:flex;flex-direction:column;font-family:var(--sans);
+  transition:height .22s cubic-bezier(.4,0,.2,1);
+  box-shadow:0 24px 60px -12px rgba(0,0,0,.7),0 0 0 1px rgba(255,255,255,.04);
+  --bg:#0E1116; --surface:#161B22; --surface2:#1C232C; --line:#262D38;
+  --fg:#E6EDF3; --dim:#7D8792; --faint:#4A5260;
+  --cpu:#38BDF8; --mem:#A78BFA; --net:#34D399; --disk:#F472B6; --gpu:#FBBF24; --warn:#F87171;
+  --v-nvidia:#7FBC03; --v-amd:#F5333C; --v-intel:#2B7FFF; --v-other:#FBBF24;
+  background:var(--bg);color:var(--fg)}
+.app.light{--bg:#F4F6F9;--surface:#FFFFFF;--surface2:#EFF2F6;--line:#DDE3EA;
+  --fg:#11161C;--dim:#68727F;--faint:#A9B3BF;
+  --cpu:#0284C7;--mem:#7C3AED;--net:#059669;--disk:#DB2777;--gpu:#B45309;--warn:#DC2626;
+  --v-nvidia:#5C8A00;--v-amd:#C81018;--v-intel:#0F62C8;--v-other:#B45309;
+  box-shadow:0 24px 60px -12px rgba(0,0,0,.45),0 0 0 1px rgba(0,0,0,.06)}
+
+.tbar{height:32px;flex:0 0 32px;display:flex;align-items:center;padding:0 6px 0 12px;border-bottom:1px solid var(--line);gap:2px;user-select:none}
+.tbar .brand{width:8px;height:8px;border-radius:50%;background:var(--gpu);margin-right:auto;box-shadow:0 0 0 3px color-mix(in srgb,var(--gpu) 18%,transparent)}
+.ticon{width:26px;height:22px;display:grid;place-items:center;border-radius:5px;color:var(--dim);cursor:pointer}
+.ticon:hover{background:var(--surface2);color:var(--fg)}
+.ticon svg{width:13px;height:13px;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.ticon.on{color:var(--gpu)}
+
+.gbar{height:44px;flex:0 0 44px;display:flex;align-items:center;gap:10px;padding:0 12px;border-bottom:1px solid var(--line);background:var(--surface)}
+.resetbtn{width:30px;height:30px;border-radius:9px;border:1px solid var(--line);background:var(--surface2);display:grid;place-items:center;color:var(--fg);cursor:pointer;transition:transform .15s,border-color .15s}
+.resetbtn:hover{border-color:var(--gpu);color:var(--gpu)}
+.resetbtn:active{transform:scale(.92)}
+.resetbtn svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round}
+.resetbtn.spin svg{animation:spin .45s cubic-bezier(.4,0,.2,1)}
+@keyframes spin{from{transform:rotate(0)}to{transform:rotate(-360deg)}}
+.elapsed{font-family:var(--mono);font-size:15px;font-variant-numeric:tabular-nums;letter-spacing:.04em}
+.dots{margin-left:auto;display:flex;gap:4px}
+.dot{width:6px;height:6px;border-radius:50%}
+.dot.off{opacity:.28}
+
+.cards{flex:1;display:flex;flex-direction:column;gap:8px;padding:8px;min-height:0}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:8px 10px 6px;
+  display:flex;flex-direction:column;position:relative;overflow:hidden;min-height:0;
+  transition:flex-grow .18s cubic-bezier(.4,0,.2,1),flex-basis .18s cubic-bezier(.4,0,.2,1)}
+.card.collapsed{flex:0 0 28px!important;padding:1px 10px}
+.card.autocol{border-style:dashed}
+.card.enter{animation:cardIn .32s cubic-bezier(.4,0,.2,1)}
+@keyframes cardIn{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
+.card.alert{border-color:color-mix(in srgb,var(--warn) 55%,transparent);
+  box-shadow:0 0 0 1px color-mix(in srgb,var(--warn) 22%,transparent),0 0 18px -6px color-mix(in srgb,var(--warn) 50%,transparent)}
+.card:hover{border-color:color-mix(in srgb,var(--fg) 16%,var(--line))}
+
+.chead{display:flex;align-items:center;gap:7px;height:26px;flex:0 0 26px;cursor:pointer;user-select:none}
+.cicon{width:16px;height:16px;flex:0 0 16px;position:relative}
+.cicon svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.gidx{position:absolute;right:-5px;bottom:-4px;font-family:var(--mono);font-size:8px;font-weight:700;line-height:1.35;
+  min-width:9px;text-align:center;border-radius:3px;background:currentColor;color:var(--surface)}
+.gidx.igpu{background:var(--surface);color:currentColor;box-shadow:inset 0 0 0 1px currentColor}
+.legend{display:flex;gap:4px;align-items:center}
+.lg{width:7px;height:7px;border-radius:2px}
+.lg.hatch{background-image:repeating-linear-gradient(45deg,currentColor 0 1.5px,transparent 1.5px 3.5px);border:1px solid currentColor}
+.clabel{font-size:10.5px;letter-spacing:.02em;color:var(--dim);white-space:nowrap;overflow:hidden;
+  max-width:0;opacity:0;transition:opacity .3s ease-out,max-width .3s ease-out}
+.app.labels .clabel,.card.newdev .clabel{max-width:150px;opacity:1}
+/* 카드에 커서를 올리면 그 카드의 장치 이름이 나타난다 (짧게 스쳐 지날 때 깜빡이지 않도록 250ms 지연) */
+.card:hover .clabel{max-width:150px;opacity:1;transition-delay:.25s}
+.spark{flex:1;height:18px;min-width:0;display:none}
+.card.collapsed .spark{display:block}
+.app.labels .card.collapsed .spark,.card.newdev.collapsed .spark,.card.collapsed:hover .spark{display:none}
+.cval{margin-left:auto;font-family:var(--mono);font-size:26px;font-weight:600;line-height:1;font-variant-numeric:tabular-nums;letter-spacing:-.02em;white-space:nowrap}
+.card.collapsed .cval{font-size:14px;font-weight:600}
+.cval.scrub{color:var(--dim)}
+.cval.scrub::before{content:'';display:inline-block;width:4px;height:4px;border-radius:50%;background:currentColor;vertical-align:4px;margin-right:5px}
+.cunit{font-size:11px;font-weight:500;color:var(--dim);margin-left:2px}
+.card.collapsed .cunit{font-size:9px}
+.canvasbox{flex:1;position:relative;min-height:0}
+.card.collapsed .canvasbox,.card.collapsed .cfoot{display:none}
+canvas{display:block;width:100%;height:100%}
+.cfoot{height:20px;flex:0 0 20px;display:flex;align-items:center;gap:12px;font-family:var(--mono);font-size:10.5px;color:var(--dim);font-variant-numeric:tabular-nums}
+.cfoot b{font-weight:600;color:color-mix(in srgb,var(--dim) 55%,transparent);margin-right:3px}
+.cfoot .scale{margin-left:auto;color:var(--faint)}
+.chev{width:12px;height:12px;color:var(--faint);flex:0 0 12px;transition:transform .18s}
+.card.collapsed .chev{transform:rotate(-90deg)}
+.chev svg{width:12px;height:12px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+
+.ovl{position:absolute;top:2px;pointer-events:none;background:color-mix(in srgb,var(--surface2) 92%,transparent);
+  border:1px solid var(--line);border-radius:7px;padding:4px 7px;font-family:var(--mono);font-size:9.5px;line-height:1.55;
+  color:var(--fg);white-space:nowrap;display:none;z-index:4;box-shadow:0 6px 18px -6px rgba(0,0,0,.6);backdrop-filter:blur(6px);
+  max-width:calc(100% - 4px);overflow:hidden}
+.ovl.show{display:block}
+.ovl .k{color:var(--dim);margin-right:5px}
+.ovl .hd{color:var(--dim);font-size:9px;letter-spacing:.06em;border-bottom:1px solid var(--line);margin:-1px -3px 3px;padding:0 3px 2px;
+  overflow:hidden;text-overflow:ellipsis}
+.ovl .wn{color:var(--warn)}
+.ovl b{font-weight:600}
+
+.svgbox{width:100%;overflow-x:auto;background:var(--page-surface);border:1px solid var(--page-border);border-radius:14px;padding:20px;margin:20px 0}
+.svgbox svg{display:block;margin:0 auto;max-width:100%;height:auto}
+.tokens{display:grid;grid-template-columns:repeat(auto-fill,minmax(168px,1fr));gap:10px;margin:14px 0}
+.tok{border:1px solid var(--page-border);border-radius:10px;overflow:hidden;background:var(--page-surface)}
+.tok .sw{height:46px}
+.tok .meta{padding:7px 10px;font-family:var(--mono);font-size:10.5px;line-height:1.5}
+.tok .meta b{display:block;font-weight:600}
+.tok .meta span{color:var(--page-dim)}
+.chip{display:inline-block;font-family:var(--mono);font-size:11px;padding:2px 7px;border-radius:999px;border:1px solid var(--page-border);background:var(--page-surface2);color:var(--page-dim);margin-right:6px}
+.toolbar{display:flex;gap:8px;align-items:center;margin:0 0 4px;flex-wrap:wrap}
+.btn{font:inherit;font-size:13px;padding:7px 14px;border-radius:9px;border:1px solid var(--page-border);background:var(--page-surface2);color:var(--page-text);cursor:pointer}
+.btn:hover{border-color:var(--page-accent);color:var(--page-accent)}
+.btn.sm{font-size:12px;padding:5px 10px}
+.btn.on{border-color:var(--page-accent);color:var(--page-accent);background:rgba(251,191,36,.08)}
+.legendkey{display:flex;gap:18px;flex-wrap:wrap;font-size:13px;color:var(--page-dim);margin:10px 0 0}
+.legendkey i{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px}
+.iconrow{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;margin:16px 0}
+.iconcell{border:1px solid var(--page-border);border-radius:10px;background:var(--page-surface);padding:14px 12px;text-align:center}
+.iconcell .big{display:block;margin:0 auto 8px;width:44px;height:44px}
+.iconcell .big svg{width:44px;height:44px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.iconcell .nm{font-family:var(--mono);font-size:11px;color:var(--page-text)}
+.iconcell .sb{font-size:11px;color:var(--page-dim);line-height:1.5;margin-top:3px}
+@media (max-width:760px){.stage{padding:26px 10px;gap:30px}.wrap{padding:28px 14px 80px}h1{font-size:26px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="doc">
+  <h1>ChronoLoad — UX 설계서
+    <small>GPU 워크로드 중심 실시간 모니터 · 세로형 WPF 위젯 · v0.4 · 2026-09-23 · 아키텍처 설계는 <a href="../PROJECT.md">PROJECT.md</a></small>
+  </h1>
+</header>
+
+<div class="note" style="margin-top:22px">
+<b>v0.4</b> — 네트워크를 <b>인터페이스별 카드</b>로 분리(이더넷 / Wi-Fi 아이콘, <b>VPN·터널은 표시하지 않음</b>), <b>장치 변경 실시간 감지</b>(Wi-Fi 켜기, eGPU 연결), <b>카드 hover 시 전체 장치명 표시</b><br>
+<span style="opacity:.75">v0.3 — GPU 제조사 아이콘·색, 디스크 SSD/HDD 아이콘, 접힘 프리셋, 최초 실행 라벨 페이드 · v0.2 — 다중 GPU, 디스크, 접기, 동기화 오버레이</span>
+</div>
+
+<h2 data-n="01">디자인 원칙</h2>
+<p class="lead">모니터 구석에 세워둔 채, <b>고개를 돌려 0.5초 안에</b> 상태를 읽어낼 수 있어야 한다. 이 문서의 모든 결정은 그 한 문장에서 파생된다.</p>
+<div class="grid2">
+  <div class="panel"><h3 style="margin-top:0">① 모양이 먼저, 숫자는 나중</h3>
+    <p>정보의 1차 채널은 <b>그래프의 형태</b>다. 숫자는 그래프를 확인 사살하는 용도로만 존재한다.</p></div>
+  <div class="panel"><h3 style="margin-top:0">② 차트는 지표 색, 아이콘은 장치 정체</h3>
+    <p>차트·푸터·상태 점은 <b>지표 종류</b>(CPU 시안 … GPU 앰버)를 따른다. 아이콘만은 <b>그 장치가 무엇인가</b>를 말한다 — 제조사(NVIDIA·AMD·Intel), 매체(SSD·HDD), 연결 종류(이더넷·Wi-Fi·VPN). 두 체계를 16px 아이콘 안으로 격리했기에 서로 간섭하지 않는다.</p></div>
+  <div class="panel"><h3 style="margin-top:0">③ 한 화면, 스크롤 없음</h3>
+    <p>탭·페이지·스크롤이 없다. 장치가 늘어난 만큼 세로가 길어지는 대신 <b>접기</b>로 흡수한다.</p></div>
+  <div class="panel"><h3 style="margin-top:0">④ 접어서 집중</h3>
+    <p>지금 보는 워크로드에 상관없는 지표는 28px 스트립으로 접는다. 접혀도 샘플링과 통계는 계속된다. 자주 쓰는 배치는 <b>프리셋</b>으로 전환한다.</p></div>
+  <div class="panel"><h3 style="margin-top:0">⑤ 한 순간을 가로질러 본다</h3>
+    <p>차트 위에 커서를 올리면 <b>모든 카드가 같은 시각을 가리킨다</b>. "GPU가 멈춘 그 순간 디스크는 뭘 했나"를 한 동작으로 확인한다.</p></div>
+  <div class="panel"><h3 style="margin-top:0">⑥ 장치 구성은 살아 움직인다<span class="new">v0.4</span></h3>
+    <p>Wi-Fi를 켜고, eGPU를 꽂고, USB 디스크를 뽑는다. 재시작 없이 <b>카드가 즉시 나타나고 사라진다</b>. 떠난 장치의 통계는 60초간 보관해 다시 붙으면 이어진다.</p></div>
+</div>
+
+<h2 data-n="02">라이브 목업</h2>
+<p class="lead">실제 렌더링 규칙을 그대로 구현한 시뮬레이션입니다. 구성: NVIDIA 외장 GPU + Intel 내장 GPU + NVMe SSD + SATA HDD + 이더넷 + Wi-Fi.</p>
+<div class="panel" style="padding:16px 20px">
+  <b style="font-size:14px">직접 해보세요</b>
+  <ul style="margin:8px 0 0;font-size:14px;line-height:1.9">
+    <li><b>Wi-Fi 끄기 · eGPU 연결</b> → 카드가 실시간으로 사라지고 나타납니다. 새 카드는 3초간 라벨을 보여줍니다.</li>
+    <li><b>프리셋</b> → 배치가 한 번에 바뀝니다. "최소"는 창 높이까지 줄어듭니다.</li>
+    <li><b>카드 헤더 클릭</b> → 접기/펼치기. 공간이 모자라면 우선순위 최저 카드가 <b>자동으로 접힙니다</b>(점선).</li>
+    <li><b>차트 위에 커서</b> → 전 카드에 같은 시각의 스크럽선과 오버레이. GPU에는 온도·전력·클럭, Wi-Fi에는 SSID·신호가 함께 나옵니다.</li>
+    <li><b>카드 위에 커서</b> → 0.25초 뒤 그 장치의 이름이 헤더에 나타납니다. 더 오래 머물면 전체 사양이 툴팁으로 뜹니다.</li>
+  </ul>
+</div>
+<div class="toolbar">
+  <span style="font-size:12px;color:var(--page-dim);font-family:var(--mono)">장치</span>
+  <button class="btn sm" id="btnWifi">Wi-Fi 끄기</button>
+  <button class="btn sm" id="btnEgpu">eGPU 연결 (AMD)</button>
+  <span style="font-size:12px;color:var(--page-dim);font-family:var(--mono);margin-left:12px">프리셋</span>
+  <button class="btn sm on" data-preset="default">기본</button>
+  <button class="btn sm" data-preset="ai">AI 워크로드</button>
+  <button class="btn sm" data-preset="render">렌더 / 게임</button>
+  <button class="btn sm" data-preset="io">데이터 전송</button>
+  <button class="btn sm" data-preset="min">최소</button>
+</div>
+<div class="toolbar" style="margin-top:10px">
+  <button class="btn" id="btnLabels">라벨 보기 (L)</button>
+  <button class="btn" id="btnReset">⟲ 전체 리셋</button>
+  <button class="btn" id="btnSpill">VRAM 스필오버 유발</button>
+  <button class="btn" id="btnPause">일시정지</button>
+  <span class="chip">샘플 250ms</span>
+</div>
+
+<div class="stage">
+  <div class="stagecol"><div class="app" id="appDark"></div><div class="stagecap">Dark — 기본 · 340 × 960 dip</div></div>
+  <div class="stagecol"><div class="app light" id="appLight"></div><div class="stagecap">Light — 시스템 추종</div></div>
+</div>
+
+<h2 data-n="03">아이콘 체계</h2>
+<p class="lead">라벨 텍스트를 쓰지 않기로 한 이상, 아이콘이 장치 정체를 전달하는 유일한 상시 채널이다. GPU는 <b>제조사</b>, 디스크는 <b>매체 종류</b>, 네트워크는 <b>연결 종류</b>를 아이콘 자체로 구분한다.</p>
+
+<h3>GPU — 제조사 글리프 + 브랜드 색</h3>
+<div class="iconrow" id="iconGpu"></div>
+<table>
+  <tr><th>제조사</th><th>PCI Vendor ID</th><th>글리프</th><th>아이콘 색 (다크 / 라이트)</th></tr>
+  <tr><td>NVIDIA</td><td><code>0x10DE</code></td><td>눈 모양 소용돌이</td><td><code>#7FBC03</code> / <code>#5C8A00</code></td></tr>
+  <tr><td>AMD</td><td><code>0x1002</code>, <code>0x1022</code></td><td>사선 화살표</td><td><code>#F5333C</code> / <code>#C81018</code></td></tr>
+  <tr><td>Intel</td><td><code>0x8086</code></td><td>원 안의 i</td><td><code>#2B7FFF</code> / <code>#0F62C8</code></td></tr>
+  <tr><td>기타 / 미상</td><td>Qualcomm <code>0x5143</code> 등</td><td>일반 그래픽 카드</td><td>지표색 앰버 폴백</td></tr>
+  <tr><td><b>NPU</b><span class="new">v0.5</span></td><td>—</td><td>칩 테두리 안의 노드 그래프</td><td>제조사 색을 쓰지 않는다 — "연산 전용 가속기"라는 사실이 먼저 읽혀야 한다</td></tr>
+</table>
+
+<div class="note"><b>NPU는 GPU가 아니다</b> — Intel AI Boost 같은 NPU는 WDDM 어댑터로 카운터에 나타나지만
+디스플레이도 전용 VRAM도 없다. <b>판정은 <code>engtype_Neural</code> 엔진 유무</b>로 하고(작업 관리자와 같은 근거),
+차트는 <b>누적 메모리 없이 사용률 단일 영역</b>으로 단순화한다. 용량선이 없는 조합 차트는 빈 영역만 늘린다.
+카드 가중치도 1.0으로 두어 GPU(1.5)보다 낮다.</div>
+<p>판정은 DXGI <code>DXGI_ADAPTER_DESC.VendorId</code>(PCI Vendor ID) 한 번으로 끝난다. 모델명 문자열 파싱은 하지 않는다 — 로캘·드라이버 버전에 따라 형식이 달라진다.</p>
+
+<h3>제조사 색은 아이콘에만 쓴다</h3>
+<p>브랜드 색을 지표 색 체계에 그대로 섞으면 세 곳에서 충돌한다.</p>
+<table>
+  <tr><th>충돌</th><th>문제</th><th>해소</th></tr>
+  <tr><td>NVIDIA 그린 ↔ 네트워크 그린</td><td>같은 화면에 초록 계열 둘</td><td>네트워크는 <b>차트·푸터·상태 점</b>에만, NVIDIA는 <b>아이콘</b>에만 → 역할이 겹치지 않는다</td></tr>
+  <tr><td>AMD 레드 ↔ 경고 레드</td><td>AMD GPU가 항상 경고처럼 보일 위험</td><td>경고는 <b>절대 아이콘 색으로 표현하지 않는다</b> — 테두리 글로우 + 해치 패턴만. 아이콘 레드는 언제나 "AMD"를 뜻한다</td></tr>
+  <tr><td>Intel 블루 ↔ CPU 시안</td><td>파랑 계열 근접</td><td>Intel은 진한 블루(<code>#2B7FFF</code>), CPU는 하늘색 시안(<code>#38BDF8</code>). 위치와 글리프 모양이 추가 단서</td></tr>
+</table>
+<p>따라서 <b>차트 선·채움·푸터 숫자·상태 점은 어느 제조사든 앰버</b>다. 제조사 색은 16px 아이콘과 인덱스 배지 안에만 존재한다.</p>
+
+<h3>외장 / 내장 구분은 인덱스 배지로</h3>
+<table>
+  <tr><th>구분</th><th>배지</th><th>추가 신호</th></tr>
+  <tr><td>외장 (dGPU, 전용 VRAM ≥ 1 GiB)</td><td><b>채운 배지</b> — 브랜드색 배경에 인덱스 숫자</td><td>전용 VRAM 용량선 표시, 스필오버 경고 있음</td></tr>
+  <tr><td>내장 (iGPU)</td><td><b>외곽선 배지</b> — 테두리만, 배경 투명</td><td>용량선 없음, 스필오버 경고 없음(공유 메모리가 정상 동작)</td></tr>
+</table>
+
+<h3>디스크 — 매체 글리프</h3>
+<div class="iconrow" id="iconDisk"></div>
+<table>
+  <tr><th>매체</th><th>글리프</th><th>판정 방법</th></tr>
+  <tr><td>SSD</td><td>모듈 + 접점</td><td><code>IOCTL_STORAGE_QUERY_PROPERTY</code> / <code>StorageDeviceSeekPenaltyProperty</code> → <code>IncursSeekPenalty == FALSE</code></td></tr>
+  <tr><td>HDD</td><td>플래터 + 액추에이터 암</td><td><code>IncursSeekPenalty == TRUE</code></td></tr>
+  <tr><td>이동식 / 미상</td><td>일반 드라이브</td><td>판정 실패 또는 USB·가상 디스크</td></tr>
+</table>
+<p style="font-size:13.5px">버스 종류(NVMe / SATA / USB)는 아이콘으로 구분하지 않는다 — 16px에서 세 갈래는 구분이 안 되고, "회전 매체인가 아닌가"만큼 중요하지도 않다. <b>오버레이 텍스트</b>로 제공한다.</p>
+
+<h3>네트워크 — 연결 종류 글리프<span class="new">v0.4</span></h3>
+<div class="iconrow" id="iconNet"></div>
+<table>
+  <tr><th>종류</th><th>글리프</th><th>판정 (<code>MIB_IF_ROW2</code>)</th></tr>
+  <tr><td>이더넷</td><td>RJ45 플러그</td><td><code>Type == IF_TYPE_ETHERNET_CSMACD(6)</code> 이고 가상/엔드포인트 플래그 없음</td></tr>
+  <tr><td>Wi-Fi</td><td>전파 아크 + 점</td><td><code>Type == IF_TYPE_IEEE80211(71)</code></td></tr>
+  <tr><td>VPN / 터널</td><td>방패 + 열쇠구멍<br><b>(카드로 표시하지 않음)</b></td><td><code>IF_TYPE_TUNNEL(131)</code>, <code>IF_TYPE_PPP(23)</code>, 또는 <code>InterfaceAndOperStatusFlags.EndPointInterface</code> → <b>식별해서 제외</b>. 이유는 §09</td></tr>
+  <tr><td>셀룰러</td><td>신호 막대</td><td><code>IF_TYPE_WWANPP(243)</code> / <code>IF_TYPE_WWANPP2(244)</code></td></tr>
+  <tr><td>기타 / 가상</td><td>양방향 화살표</td><td>위에 해당 없음 (Hyper-V, WSL, Bluetooth PAN 등)</td></tr>
+</table>
+<p style="font-size:13.5px">네트워크 카드는 종류와 무관하게 <b>전부 그린</b>이다. GPU에서 제조사 색을 도입한 것은 브랜드 색이 널리 알려져 있어 인지 비용이 0에 가깝기 때문이고, "이더넷 색 / Wi-Fi 색" 같은 관습은 존재하지 않는다. 없는 관습을 발명하면 학습 부담만 늘어난다.</p>
+
+<div class="note"><b>상표 관련</b> — 제조사 로고와 브랜드 색은 각 사의 등록 상표다. 원본 로고 파일을 그대로 쓰지 않고 <b>16px 라인 아이콘 그리드에 맞춰 자체 제작한 단색 추상 글리프</b>를 쓴다. 색도 브랜드 원본(<code>#76B900</code>, <code>#ED1C24</code>, <code>#0068B5</code>)이 아니라 <b>다크/라이트 배경에서 대비 3:1 이상을 확보하도록 조정한 값</b>이다. 공식 로고·색을 그대로 쓰려면 각 사 브랜드 가이드라인의 허용 범위를 별도로 확인해야 한다.</div>
+
+<h2 data-n="04">최초 실행 라벨 페이드</h2>
+<p class="lead">"라벨 0개"는 익숙해진 뒤에는 최적이지만 첫 5분은 불친절하다. <b>최초 1회에 한해 3초간 라벨을 보여주고 사라지게</b> 해서, 학습 비용만 지불하고 상시 화면은 깨끗하게 유지한다.</p>
+<div class="svgbox">
+<svg viewBox="0 0 820 180" xmlns="http://www.w3.org/2000/svg" font-family="ui-monospace,Consolas,monospace" font-size="11">
+  <text x="10" y="18" fill="#8B95A3">0.0s — 표시</text>
+  <rect x="10" y="26" width="250" height="34" rx="8" fill="#161B22" stroke="#262D38"/>
+  <rect x="20" y="36" width="13" height="13" rx="2" fill="none" stroke="#7FBC03"/>
+  <text x="41" y="47" fill="#7D8792" font-size="10.5">RTX 4090</text>
+  <text x="250" y="49" fill="#E6EDF3" font-size="16" font-weight="600" text-anchor="end">78</text>
+  <text x="290" y="18" fill="#8B95A3">3.0s — 페이드 시작</text>
+  <rect x="290" y="26" width="250" height="34" rx="8" fill="#161B22" stroke="#262D38"/>
+  <rect x="300" y="36" width="13" height="13" rx="2" fill="none" stroke="#7FBC03"/>
+  <text x="321" y="47" fill="#7D8792" font-size="10.5" opacity=".35">RTX 4090</text>
+  <text x="530" y="49" fill="#E6EDF3" font-size="16" font-weight="600" text-anchor="end">78</text>
+  <text x="570" y="18" fill="#8B95A3">3.3s — 이후 상시</text>
+  <rect x="570" y="26" width="240" height="34" rx="8" fill="#161B22" stroke="#262D38"/>
+  <rect x="580" y="36" width="13" height="13" rx="2" fill="none" stroke="#7FBC03"/>
+  <text x="800" y="49" fill="#E6EDF3" font-size="16" font-weight="600" text-anchor="end">78</text>
+  <g fill="#8B95A3" font-size="11.5">
+    <text x="10" y="90" fill="#C3CCD6">재등장 조건</text>
+    <text x="10" y="110">· 최초 실행 1회 (설정에 <tspan font-family="ui-monospace" fill="#C3CCD6">labelsShown</tspan> 플래그 저장)</text>
+    <text x="10" y="130">· <tspan fill="#C3CCD6">새 장치가 붙을 때</tspan> — Wi-Fi 켜기, eGPU 연결, 디스크 장착 시 <tspan fill="#C3CCD6">그 카드만</tspan> 3초</text>
+    <text x="10" y="150">· <tspan fill="#C3CCD6">카드에 커서를 올린 동안</tspan> — 0.25초 지연 후 그 카드만</text>
+    <text x="10" y="170">· <tspan fill="#C3CCD6">L 키를 누르고 있는 동안</tspan> / 설정의 "라벨 항상 표시"(기본 off)</text>
+    <text x="430" y="90" fill="#C3CCD6">라벨 내용</text>
+    <text x="430" y="110">· CPU / 메모리 32G</text>
+    <text x="430" y="130">· 네트워크 — 어댑터 별칭 (Ethernet, Wi-Fi SSID, VPN 이름)</text>
+    <text x="430" y="150">· 디스크 · GPU — 모델명 축약 (990 PRO NVMe, RTX 4090)</text>
+    <text x="430" y="170" fill="#5E6773">긴 이름은 말줄임. 전체 이름은 hover 툴팁에</text>
+  </g>
+</svg>
+</div>
+<p><b>접힌 카드</b>는 라벨 표시 중 스파크라인을 잠시 감추고 라벨을 보여준다 — 28px 안에 둘 다 넣으면 어느 쪽도 읽히지 않는다. 라벨은 <b>텍스트 예산 밖</b>이다(일시적이고 사용자가 요청했거나 장치 구성이 바뀐 순간이므로).</p>
+
+<h3>hover = "이게 뭐였지?"에 대한 즉답<span class="new">v0.4</span></h3>
+<p>라벨이 한 번 사라지고 나면 "세 번째 카드가 어느 디스크였지?"를 확인할 방법이 필요하다. <b>카드에 커서를 올리면 그 카드의 장치 이름이 헤더에 나타난다.</b></p>
+<table>
+  <tr><th>단계</th><th>표시</th><th>내용</th></tr>
+  <tr><td>hover 0.25초</td><td>헤더 라벨 페이드 인</td><td>축약 이름 — <code>990 PRO NVMe</code>, <code>RTX 4090</code>, <code>Wi-Fi · HOME-5G</code></td></tr>
+  <tr><td>hover 유지 (툴팁 지연)</td><td>네이티브 툴팁</td><td>전체 사양 — <code>Samsung SSD 990 PRO 2TB · NVMe · PCIe 4.0 x4</code></td></tr>
+  <tr><td>차트 위 hover</td><td>오버레이 헤더</td><td>전체 사양 + 스크럽 시각 — <code>NVIDIA GeForce RTX 4090 · 외장 · 24 GiB GDDR6X · 드라이버 566.36 · −12.4s</code></td></tr>
+</table>
+<p style="font-size:13.5px">0.25초 지연을 두는 이유 — 카드 사이를 빠르게 지나갈 때 라벨이 연달아 깜빡이면 화면이 소란스러워진다. 접힌 카드에서는 hover 동안 스파크라인 대신 라벨이 보인다.</p>
+
+<h2 data-n="05">카드 구성과 높이 분배</h2>
+<p class="lead">GPU·디스크·네트워크가 각각 여러 개가 되면서 "고정 높이 카드를 쌓는다"는 방식은 성립하지 않는다. <b>가중치 기반 높이 분배 + 자동 접힘</b>으로 처리한다.</p>
+
+<table>
+  <tr><th>카드</th><th>색</th><th>아이콘</th><th>가중치</th><th>우선순위</th><th>기본</th></tr>
+  <tr><td>GPU 0 (외장)</td><td>앰버</td><td>제조사 글리프 + 채운 배지</td><td>1.5</td><td>100</td><td>펼침</td></tr>
+  <tr><td>CPU</td><td>시안</td><td>칩</td><td>1.0</td><td>90</td><td>펼침</td></tr>
+  <tr><td>GPU 1..N</td><td>앰버</td><td>제조사 글리프 + 배지</td><td>1.5</td><td>80</td><td>접힘</td></tr>
+  <tr><td>메모리</td><td>퍼플</td><td>스택</td><td>1.0</td><td>70</td><td>펼침</td></tr>
+  <tr><td>디스크 0 (시스템)</td><td>로즈</td><td>SSD / HDD</td><td>1.0</td><td>60</td><td>펼침</td></tr>
+  <tr><td>디스크 1..N</td><td>로즈</td><td>SSD / HDD</td><td>1.0</td><td>55</td><td>접힘</td></tr>
+  <tr><td>네트워크 — 기본 경로</td><td>그린</td><td>연결 종류 글리프</td><td>1.0</td><td>50</td><td>펼침</td></tr>
+  <tr><td>네트워크 — 기타</td><td>그린</td><td>연결 종류 글리프</td><td>1.0</td><td>45</td><td>접힘</td></tr>
+</table>
+<p>우선순위는 <b>공간이 모자랄 때 누가 먼저 접히는가</b>만 결정한다. 표시 순서는 CPU → 메모리 → 네트워크 → 디스크 → GPU이며 설정에서 드래그로 바꿀 수 있다.</p>
+
+<h3>첫 실행 창 높이는 장치 구성에서 계산한다<span class="new">v0.4</span></h3>
+<p>카드 종류가 9개까지 늘어나면서 "기본 880"이라는 고정값은 의미가 없어졌다. 첫 실행 시 다음으로 계산하고, 이후에는 사용자가 정한 크기를 따른다.</p>
+<p style="font-family:var(--mono);font-size:12.5px;background:var(--page-surface2);padding:12px 14px;border-radius:8px;border:1px solid var(--page-border)">
+기본 높이 = 76(헤더) + 16(여백) + 갭(카드수−1 × 8)<br>
+&nbsp;&nbsp;&nbsp;&nbsp;+ Σ(기본 펼침 카드 × 130 × 가중치) + Σ(기본 접힘 카드 × 28)<br>
+&nbsp;&nbsp;→ 상한 = 작업 영역 높이의 <b>85%</b> · 하한 = <b>최소 창 높이 420</b>
+</p>
+<p style="font-size:13.5px">GPU 2 + 디스크 2 + 네트워크 2 구성이면 <b>약 950</b>이 나온다(목업은 960). 장치가 적은 노트북(GPU 1 + 디스크 1 + Wi-Fi 1)이면 560 정도. 화면이 작으면 상한에 걸려 줄고, 부족한 만큼 자동 접힘이 메운다.</p>
+<div class="note"><b>하한을 작업 영역에 비례시키지 않는 이유</b> — 처음에는 "작업 영역의 60~85%"로 잡았는데, 구현 중 테스트에서 걸렸다. 4K 모니터(작업 영역 2160)에서 카드 3개짜리 노트북이 하한 1296px에 걸리면 카드 하나가 400px씩 차지하는 우스운 레이아웃이 된다. <b>상한만 화면에 비례</b>시키고 하한은 최소 창 높이(420)로 고정한다.</div>
+
+<div class="svgbox">
+<svg viewBox="0 0 820 330" xmlns="http://www.w3.org/2000/svg" font-family="ui-monospace,Consolas,monospace" font-size="11.5">
+  <text x="10" y="18" fill="#C3CCD6" font-size="13">available = 카드영역 높이 − 카드간 갭 − (접힌 카드 수 × 28)</text>
+  <text x="10" y="38" fill="#C3CCD6" font-size="13">각 펼친 카드 높이 = available × (자기 가중치 ÷ 펼친 카드 가중치 합)</text>
+  <text x="10" y="58" fill="#F87171" font-size="13">while (가장 작은 펼친 카드 높이 &lt; 118 &amp;&amp; 펼친 카드 &gt; 1) → 우선순위 최저 카드 자동 접기 → 재계산</text>
+
+  <g>
+    <text x="10" y="92" fill="#8B95A3">기본 — 8카드 / 340×960</text>
+    <rect x="10" y="100" width="380" height="22" rx="4" fill="#38BDF8" fill-opacity=".22" stroke="#38BDF8" stroke-opacity=".5"/><text x="18" y="115" fill="#38BDF8">CPU 134</text>
+    <rect x="10" y="126" width="380" height="22" rx="4" fill="#A78BFA" fill-opacity=".22" stroke="#A78BFA" stroke-opacity=".5"/><text x="18" y="141" fill="#A78BFA">MEM 134</text>
+    <rect x="10" y="152" width="380" height="22" rx="4" fill="#34D399" fill-opacity=".22" stroke="#34D399" stroke-opacity=".5"/><text x="18" y="167" fill="#34D399">ETHERNET 134</text>
+    <rect x="10" y="178" width="380" height="12" rx="3" fill="#34D399" fill-opacity=".1" stroke="#34D399" stroke-opacity=".35" stroke-dasharray="3 2"/><text x="18" y="188" fill="#34D399" font-size="9">Wi-Fi 28</text>
+    <rect x="10" y="194" width="380" height="22" rx="4" fill="#F472B6" fill-opacity=".22" stroke="#F472B6" stroke-opacity=".5"/><text x="18" y="209" fill="#F472B6">DISK0 SSD 134</text>
+    <rect x="10" y="220" width="380" height="12" rx="3" fill="#F472B6" fill-opacity=".1" stroke="#F472B6" stroke-opacity=".35" stroke-dasharray="3 2"/><text x="18" y="230" fill="#F472B6" font-size="9">DISK1 HDD 28</text>
+    <rect x="10" y="236" width="380" height="34" rx="4" fill="#FBBF24" fill-opacity=".22" stroke="#FBBF24" stroke-opacity=".6"/><text x="18" y="257" fill="#FBBF24">GPU0 NVIDIA 193 (가중치 1.5)</text>
+    <rect x="10" y="274" width="380" height="12" rx="3" fill="#FBBF24" fill-opacity=".1" stroke="#FBBF24" stroke-opacity=".35" stroke-dasharray="3 2"/><text x="18" y="284" fill="#8B6914" font-size="9">GPU1 Intel 28</text>
+    <text x="10" y="310" fill="#5E6773" font-size="10.5">가중치 합 5.5 · available 728 · 최소 134 ≥ 118 ✓</text>
+  </g>
+
+  <g transform="translate(420,0)">
+    <text x="10" y="92" fill="#8B95A3">eGPU(AMD) 연결 → 9카드, 새 카드는 접힌 채 등장</text>
+    <rect x="10" y="100" width="380" height="20" rx="4" fill="#38BDF8" fill-opacity=".22" stroke="#38BDF8" stroke-opacity=".5"/><text x="18" y="114" fill="#38BDF8">CPU 127</text>
+    <rect x="10" y="124" width="380" height="20" rx="4" fill="#A78BFA" fill-opacity=".22" stroke="#A78BFA" stroke-opacity=".5"/><text x="18" y="138" fill="#A78BFA">MEM 127</text>
+    <rect x="10" y="148" width="380" height="20" rx="4" fill="#34D399" fill-opacity=".22" stroke="#34D399" stroke-opacity=".5"/><text x="18" y="162" fill="#34D399">ETHERNET 127</text>
+    <rect x="10" y="172" width="380" height="12" rx="3" fill="#34D399" fill-opacity=".1" stroke="#34D399" stroke-opacity=".35" stroke-dasharray="3 2"/><text x="18" y="182" fill="#34D399" font-size="9">Wi-Fi 28</text>
+    <rect x="10" y="190" width="380" height="22" rx="4" fill="#F472B6" fill-opacity=".22" stroke="#F472B6" stroke-opacity=".5"/><text x="18" y="205" fill="#F472B6">DISK0 127</text>
+    <rect x="10" y="216" width="380" height="12" rx="3" fill="#F472B6" fill-opacity=".1" stroke="#F472B6" stroke-opacity=".35" stroke-dasharray="3 2"/><text x="18" y="226" fill="#F472B6" font-size="9">DISK1 28</text>
+    <rect x="10" y="232" width="380" height="32" rx="4" fill="#FBBF24" fill-opacity=".22" stroke="#FBBF24" stroke-opacity=".6"/><text x="18" y="252" fill="#FBBF24">GPU0 183</text>
+    <rect x="10" y="268" width="380" height="12" rx="3" fill="#FBBF24" fill-opacity=".1" stroke="#FBBF24" stroke-opacity=".35" stroke-dasharray="3 2"/><text x="18" y="278" fill="#8B6914" font-size="9">GPU1 Intel 28</text>
+    <rect x="10" y="284" width="380" height="12" rx="3" fill="#F5333C" fill-opacity=".14" stroke="#F5333C" stroke-opacity=".5" stroke-dasharray="3 2"/><text x="18" y="294" fill="#F5333C" font-size="9">GPU2 AMD 28 ← 새 카드 (라벨 3초)</text>
+    <text x="10" y="316" fill="#5E6773" font-size="10.5">창 크기는 그대로. 기존 카드가 조금씩 양보한다 (134 → 127)</text>
+  </g>
+</svg>
+</div>
+
+<table>
+  <tr><th>항목</th><th>값</th><th>비고</th></tr>
+  <tr><td>기본 크기</td><td>340 × (장치 구성에서 계산)</td><td>GPU 2 + 디스크 2 + 네트워크 3 → 960</td></tr>
+  <tr><td>최소 크기</td><td>300 × 420 dip</td><td>접기 덕분에 v0.1의 620에서 내려왔다</td></tr>
+  <tr><td>접힌 카드 높이</td><td>28 dip</td><td>아이콘 + 전체폭 스파크라인 + 현재값</td></tr>
+  <tr><td>펼친 카드 최소 높이</td><td>118 dip</td><td>이하로 내려가면 차트가 형태를 잃는다 → 자동 접힘 발동선</td></tr>
+  <tr><td>GPU 가중치</td><td>1.5</td><td>주 용도이므로 같은 조건에서 1.5배 높다</td></tr>
+</table>
+
+<div class="note"><b>자동 접힘은 사용자 결정을 덮어쓰지 않는다</b> — 자동으로 접힌 카드는 <b>점선 테두리</b>로 표시되고, 공간이 다시 생기면 자동 복원된다. 사용자가 직접 접은 카드는 자동 복원 대상이 아니다.</div>
+
+<h2 data-n="06">접힘 프리셋</h2>
+<table>
+  <tr><th>프리셋</th><th>펼침</th><th>의도</th><th>단축키</th></tr>
+  <tr><td><b>기본</b></td><td>CPU · 메모리 · 기본 네트워크 · 디스크0 · GPU0</td><td>일상 모니터링</td><td><code>Ctrl+1</code></td></tr>
+  <tr><td><b>AI 워크로드</b></td><td>GPU 전부 · 메모리 · 디스크0</td><td>학습/추론 — VRAM과 데이터 로딩 병목에 집중</td><td><code>Ctrl+2</code></td></tr>
+  <tr><td><b>렌더 / 게임</b></td><td>GPU0 · CPU</td><td>프레임 타임에 영향을 주는 둘만 크게</td><td><code>Ctrl+3</code></td></tr>
+  <tr><td><b>데이터 전송</b></td><td>네트워크 전부 · 디스크 전부</td><td>대용량 복사·다운로드·백업. VPN 경유 여부까지 한눈에</td><td><code>Ctrl+4</code></td></tr>
+  <tr><td><b>최소</b></td><td>없음 (전부 접힘)</td><td>스트립 모드. <b>창 높이도 함께 줄어든다</b></td><td><code>Ctrl+5</code></td></tr>
+  <tr><td>사용자 정의 ×5</td><td>현재 배치 저장</td><td>팝오버에서 "현재 배치 저장"</td><td><code>Ctrl+6</code>~<code>9</code></td></tr>
+</table>
+<div class="grid2">
+  <div class="panel">
+    <h3 style="margin-top:0">장치 인스턴스가 아니라 규칙으로 저장한다</h3>
+    <p>"GPU 1번 카드를 접는다"고 저장하면 그래픽카드를 교체하거나 eGPU를 뽑는 순간 의미를 잃는다. <b>장치 종류 규칙</b>으로 저장한다.</p>
+    <p style="font-family:var(--mono);font-size:12px;background:var(--page-surface2);padding:10px 12px;border-radius:8px;border:1px solid var(--page-border)">
+      { "gpu:*": "expanded",<br>
+      &nbsp;&nbsp;"disk:system": "expanded",<br>
+      &nbsp;&nbsp;"disk:*": "collapsed",<br>
+      &nbsp;&nbsp;"net:*": "collapsed",<br>
+      &nbsp;&nbsp;"cpu": "collapsed" }
+    </p>
+    <p style="font-size:13px;color:var(--page-dim)">장치가 붙거나 빠져도 프리셋이 그대로 유효하다 — <b>이것이 v0.4의 핫플러그와 맞물리는 지점</b>이다. 새로 붙은 Wi-Fi는 <code>net:*</code> 규칙을 따라 자동으로 올바른 상태가 된다.</p>
+  </div>
+  <div class="panel">
+    <h3 style="margin-top:0">전환 UI</h3>
+    <ul style="font-size:14px">
+      <li>타이틀바에 <b>프리셋 아이콘 1개</b> (핀 · 프리셋 · 테마 · 최소화 · 닫기)</li>
+      <li>클릭 → 작은 팝오버에 프리셋 목록 + "현재 배치 저장"</li>
+      <li><code>Ctrl+1</code>~<code>Ctrl+9</code>로 즉시 전환</li>
+      <li>프리셋 적용 후 카드를 직접 토글하면 <b>"수정됨"</b> 상태가 되고, 저장은 명시적으로만</li>
+      <li>전환은 접기와 같은 180ms 모션</li>
+    </ul>
+  </div>
+</div>
+
+<h2 data-n="07">접기 인터랙션</h2>
+<table>
+  <tr><th>트리거</th><th>동작</th></tr>
+  <tr><td>헤더 클릭</td><td>해당 카드 접기/펼치기 토글</td></tr>
+  <tr><td>아이콘 더블클릭</td><td>solo — 그 카드만 펼치고 나머지 전부 접기. 다시 더블클릭하면 복원</td></tr>
+  <tr><td><code>1</code>~<code>9</code></td><td>n번째 카드 토글</td></tr>
+  <tr><td><code>Ctrl+1</code>~<code>Ctrl+9</code></td><td>프리셋 전환</td></tr>
+  <tr><td>공간 부족</td><td>우선순위 최저 카드부터 자동 접힘(점선). 공간이 생기면 자동 복원</td></tr>
+  <tr><td>센서 사용 불가</td><td>카드가 접힌 상태로 고정되고 스파크라인 자리에 얇은 0선만</td></tr>
+</table>
+
+<h2 data-n="08">동기화 오버레이</h2>
+<p class="lead">모든 카드는 <b>동일한 시간 축</b>을 공유한다. 한 지점을 가리키는 것은 곧 <b>시스템 전체의 한 순간을 잘라 보는 것</b>이다.</p>
+<table>
+  <tr><th>동작</th><th>결과</th></tr>
+  <tr><td>차트 위 이동</td><td>전 카드에 스크럽선 + 오버레이. 헤더 현재값이 그 시점 값으로 바뀌고 <b>앞에 점이 붙어</b> "지금 값이 아님"을 표시</td></tr>
+  <tr><td>차트에서 벗어남</td><td>120ms 후 현재값으로 복귀</td></tr>
+  <tr><td>차트 클릭</td><td>스크럽 위치 <b>고정</b>. 다시 클릭하면 해제</td></tr>
+  <tr><td>고정 상태 <code>←</code> <code>→</code></td><td>한 샘플씩 이동 (<code>Shift</code> 동반 시 10샘플)</td></tr>
+  <tr><td><code>Esc</code></td><td>고정 해제</td></tr>
+</table>
+<h3>카드별 오버레이 내용</h3>
+<p style="font-size:13.5px">전체 패널의 첫 줄은 <b>언제나 그 장치의 전체 이름</b>이다 — hover로 이름을 확인하려는 동작과 값을 읽으려는 동작이 같은 제스처로 해결된다.</p>
+<table>
+  <tr><th>카드</th><th>요약 칩 (비호버)</th><th>전체 패널 (호버) — 첫 줄은 전체 장치명</th></tr>
+  <tr><td>CPU</td><td>사용률</td><td>+ 논리 코어별 미니 바, 프로세스 수</td></tr>
+  <tr><td>메모리</td><td>사용률</td><td>+ 사용/전체 GiB, 커밋 차지</td></tr>
+  <tr><td>이더넷</td><td>↓ ↑ 속도</td><td>+ 링크 속도, 이중화, 어댑터 별칭</td></tr>
+  <tr><td>Wi-Fi</td><td>↓ ↑ 속도</td><td>+ <b>SSID, 신호 품질 %, 대역(2.4/5/6GHz), PHY 속도</b></td></tr>
+  <tr><td>디스크</td><td>읽기 / 쓰기</td><td>+ 활성 %, 큐, 평균 응답 ms, 버스 종류</td></tr>
+  <tr><td>GPU</td><td>사용률, 전용+공유</td><td>+ 엔진별 분해, <b>온도 · 전력 · 코어 클럭</b></td></tr>
+</table>
+<div class="note"><b>텍스트 예산의 예외 구역</b> — 상시 화면은 카드당 숫자 5개로 제한하지만, 오버레이는 사용자가 명시적으로 요청했을 때만 나타나므로 정보 밀도를 높게 잡는다. 온도·전력·SSID를 상시 표시하지 않고 여기로 보낸 이유다.<br><br><b>채택하지 않음</b> — 두 시점을 동시에 고정해 비교하는 A/B 마커는 도입하지 않는다. 단일 화면 원칙과 충돌하고, 구간 비교는 리셋 마커가 이미 담당한다.</div>
+
+<h2 data-n="09">네트워크 인터페이스 분리 <span class="new">v0.4</span></h2>
+<p class="lead">합산 1카드에서 <b>인터페이스별 카드</b>로 바꾼다. 유선과 무선을 동시에 쓰거나, VPN을 경유하거나, 테더링으로 전환하는 상황에서 합산값은 아무것도 설명하지 못한다.</p>
+
+<div class="note"><b>VPN·터널 인터페이스는 카드로 만들지 않는다</b><br>
+터널을 지나는 바이트는 <b>하위 물리 NIC에도 그대로 계상</b>된다. 1GB를 VPN으로 내려받으면 VPN 카드에 1GB, 이더넷 카드에도 1GB가 찍힌다. 같은 트래픽이 두 카드에 나타나면 "지금 회선을 얼마나 쓰고 있나"라는 질문에 <b>틀린 답을 주게 된다</b>.<br><br>
+그래서 터널은 <b>식별해서 제외</b>한다. 실제 회선 사용량은 하위 물리 인터페이스 카드가 정확히 보여주므로 잃는 정보도 없다. VPN 경유 여부 자체가 궁금한 경우를 위해 설정에 <i>"터널 인터페이스 표시"</i>를 두되 <b>기본 off</b>이며, 켜면 해당 카드에 이중 계상 주의가 함께 표시된다.</div>
+
+<h3>어떤 인터페이스를 보여줄 것인가</h3>
+<p>일반적인 Windows 기기에는 Hyper-V, WSL, Bluetooth PAN, 루프백 등 가상 어댑터가 10개 넘게 존재한다. 전부 카드로 만들면 쓸 수 없다.</p>
+<table>
+  <tr><th>단계</th><th>규칙</th></tr>
+  <tr><td>1. 제외</td><td><code>IF_TYPE_SOFTWARE_LOOPBACK</code>, <code>OperStatus != Up</code></td></tr>
+  <tr><td>2. 무트래픽 숨김</td><td>누적 옥텟이 <b>5분간 전혀 변하지 않으면</b> 카드를 숨긴다. 트래픽이 생기면 다시 나타난다 — 이 한 줄이 가상 어댑터 대부분을 걸러낸다</td></tr>
+  <tr><td>3. 기본 경로 우선</td><td><code>GetBestRoute2</code>로 기본 게이트웨이를 가진 인터페이스를 찾아 <b>기본 펼침</b>으로 둔다. 나머지는 접힘</td></tr>
+  <tr><td>4. 사용자 결정</td><td>설정에서 인터페이스별 표시/숨김을 고정할 수 있다. 사용자 결정이 2번 규칙보다 우선</td></tr>
+</table>
+
+<h3>표시</h3>
+<ul>
+  <li>디스크·기존 네트워크와 동일한 <b>미러 차트</b> — 위 = 수신, 아래 = 송신</li>
+  <li>현재값은 수신 속도, 푸터는 <code>~</code> 수신 평균 · <code>▲</code> 수신 최대 · <code>↑</code> 송신 최대</li>
+  <li>축 스케일은 <b>인터페이스별로 독립</b> — 2.5GbE와 Wi-Fi를 같은 축에 올리면 Wi-Fi가 바닥에 붙는다</li>
+  <li>링크 속도를 아는 인터페이스는 축 상한을 <b>링크 속도로 캡</b>해서 "회선을 얼마나 쓰고 있는가"가 위치로 읽히게 한다</li>
+</ul>
+
+<h2 data-n="10">장치 변경 실시간 반영 <span class="new">v0.4</span></h2>
+<p class="lead">Wi-Fi를 켜고, eGPU를 꽂고, USB 디스크를 뽑는다. 재시작 없이 카드가 즉시 나타나고 사라져야 한다. <b>목업의 "Wi-Fi 끄기" / "eGPU 연결" 버튼으로 직접 확인할 수 있다.</b></p>
+
+<h3>감지 경로</h3>
+<table>
+  <tr><th>대상</th><th>이벤트 소스</th><th>비고</th></tr>
+  <tr><td>GPU 어댑터</td><td><code>IDXGIFactory7::RegisterAdaptersChangedEvent</code></td><td>Win10 1803+. 없으면 <code>IDXGIFactory::IsCurrent()</code> 폴링</td></tr>
+  <tr><td>GPU 드라이버 재시작(TDR)</td><td><code>DXGI_ERROR_DEVICE_REMOVED</code> + PDH 인스턴스 소실</td><td>같은 LUID로 돌아오면 히스토리 유지</td></tr>
+  <tr><td>디스크 · 볼륨</td><td><code>WM_DEVICECHANGE</code> (<code>GUID_DEVINTERFACE_DISK</code>, <code>_VOLUME</code>)</td><td>WPF <code>HwndSource.AddHook</code>으로 수신</td></tr>
+  <tr><td>네트워크 인터페이스 추가/제거/Up/Down</td><td><code>NotifyIpInterfaceChange</code> (IpHlpApi)</td><td>Wi-Fi 라디오 on/off가 여기로 들어온다</td></tr>
+  <tr><td>Wi-Fi 연결 상태 · SSID 변경</td><td><code>WlanRegisterNotification</code></td><td>오버레이의 SSID·신호 갱신용</td></tr>
+  <tr><td>절전 복귀 · 디스플레이 변경</td><td><code>WM_POWERBROADCAST</code>, <code>WM_DISPLAYCHANGE</code></td><td>델타 기준선 재설정</td></tr>
+</table>
+
+<h3>처리 규칙</h3>
+<div class="grid2">
+  <div class="panel">
+    <h3 style="margin-top:0">디바운스와 레이트 리밋</h3>
+    <p>eGPU를 한 번 꽂으면 <code>WM_DEVICECHANGE</code>가 수십 번 날아온다. 매번 재열거하면 UI가 발작한다.</p>
+    <ul style="font-size:14px">
+      <li>이벤트 수신 → <b>300ms 디바운스</b> 후 1회 재열거</li>
+      <li>재열거는 <b>초당 1회</b>로 제한</li>
+      <li>연속 3회 실패 시 60초 백오프</li>
+      <li>재열거는 <b>백그라운드 스레드</b>에서 수행하고, 결과 diff만 UI 스레드에 적용 — 샘플링은 멈추지 않는다</li>
+      <li>이벤트를 놓쳐도 <b>30초 주기 검증 재열거</b>(어댑터 목록 해시 비교)가 복구한다</li>
+    </ul>
+  </div>
+  <div class="panel">
+    <h3 style="margin-top:0">추가 · 제거 · 상태 변경</h3>
+    <table style="margin-top:6px">
+      <tr><th>변화</th><th>동작</th></tr>
+      <tr><td><b>추가</b></td><td>카드 등장(320ms 페이드 인), <b>프리셋 규칙에 따라</b> 접힘/펼침 결정, 라벨 3초 표시, 레지스트리 슬롯 추가</td></tr>
+      <tr><td><b>제거</b></td><td>카드 제거(180ms), 시리즈·통계는 <b>60초 보관</b> 후 폐기</td></tr>
+      <tr><td><b>재연결</b></td><td>60초 안에 같은 키(LUID·시리얼·인터페이스 GUID)로 돌아오면 <b>히스토리·통계가 이어진다</b></td></tr>
+      <tr><td><b>Up ↔ Down</b></td><td>제거가 아니라 <b>Unavailable 상태</b>. 카드 유지, 통계 연속, 차트에 공백 구간</td></tr>
+    </table>
+  </div>
+</div>
+
+<div class="note"><b>왜 "제거"와 "Down"을 구분하는가</b> — Wi-Fi를 껐다 켜거나 드라이버가 재시작되면 장치가 잠깐 사라졌다 돌아온다. 이때 카드를 지웠다 새로 만들면 <b>리셋 이후 누적 통계가 초기화</b>되어 벤치마크 구간이 통째로 날아간다. 60초 보관 규칙은 이걸 막기 위한 것이다.</div>
+
+<h3>사용자에게 어떻게 알리는가</h3>
+<p>토스트나 알림 배너는 쓰지 않는다 — 텍스트 최소화 원칙에 어긋나고, 구석에 세워둔 위젯이 갑자기 말을 거는 것은 성가시다. 대신 <b>이미 있는 두 장치를 재사용</b>한다.</p>
+<ul>
+  <li><b>카드의 등장/소멸 자체</b>가 알림이다 (320ms 페이드 인 + 라벨 3초)</li>
+  <li><b>전역 바의 상태 점</b> 개수가 바뀌는 것으로 구성 변화가 보인다</li>
+</ul>
+
+<h2 data-n="11">다중 GPU</h2>
+<table>
+  <tr><th>항목</th><th>규칙</th></tr>
+  <tr><td>열거</td><td>DXGI <code>EnumAdapterByGpuPreference(HIGH_PERFORMANCE)</code>. 소프트웨어 어댑터 제외</td></tr>
+  <tr><td>식별</td><td>아이콘 = <b>제조사 글리프 + 브랜드 색</b>, 배지 = <b>인덱스 + 외장/내장</b>, 라벨 페이드 = 모델명</td></tr>
+  <tr><td>순서</td><td>외장 → 내장, 그 안에서는 전용 VRAM 큰 순</td></tr>
+  <tr><td>기본 표시</td><td>0번만 펼침. 유휴 60초 이상인 어댑터는 접힌 채로</td></tr>
+  <tr><td>3개 이상</td><td>제한 없음. 가중치·자동 접힘·프리셋 규칙이 그대로 적용</td></tr>
+  <tr><td>핫플러그</td><td>§10의 규칙을 따른다. LUID 기준으로 통계 유지</td></tr>
+</table>
+
+<h2 data-n="12">GPU 조합 차트</h2>
+<div class="svgbox">
+<svg viewBox="0 0 800 330" xmlns="http://www.w3.org/2000/svg" font-family="ui-monospace,Consolas,monospace" font-size="11.5">
+  <defs>
+    <pattern id="hx" width="6" height="6" patternTransform="rotate(45)" patternUnits="userSpaceOnUse"><line x1="0" y1="0" x2="0" y2="6" stroke="#FBBF24" stroke-width="2" stroke-opacity=".45"/></pattern>
+    <pattern id="hxw" width="6" height="6" patternTransform="rotate(45)" patternUnits="userSpaceOnUse"><line x1="0" y1="0" x2="0" y2="6" stroke="#F87171" stroke-width="2" stroke-opacity=".6"/></pattern>
+  </defs>
+  <rect x="40" y="30" width="480" height="210" rx="10" fill="#12171F" stroke="#262D38"/>
+  <g stroke="#262D38"><line x1="40" y1="82" x2="520" y2="82"/><line x1="40" y1="135" x2="520" y2="135"/><line x1="40" y1="188" x2="520" y2="188"/></g>
+  <path d="M40 240 L40 178 L100 172 L160 160 L220 150 L280 132 L340 122 L400 116 L460 112 L520 110 L520 240 Z" fill="#FBBF24" fill-opacity=".22"/>
+  <path d="M40 178 L100 172 L160 160 L220 150 L280 132 L340 122 L400 116 L460 112 L520 110 L520 78 L460 82 L400 92 L340 104 L280 118 L220 146 L160 158 L100 170 L40 177 Z" fill="url(#hx)"/>
+  <path d="M400 92 L460 82 L520 78 L520 100 L460 100 L400 100 Z" fill="url(#hxw)"/>
+  <line x1="40" y1="100" x2="520" y2="100" stroke="#F87171" stroke-width="1.4" stroke-dasharray="6 4"/>
+  <text x="514" y="94" fill="#F87171" text-anchor="end" font-size="10.5">전용 VRAM 용량 24G</text>
+  <path d="M40 200 L70 150 L100 120 L130 138 L160 96 L190 104 L220 70 L250 88 L280 62 L310 74 L340 58 L370 66 L400 52 L430 60 L460 54 L490 62 L520 56" fill="none" stroke="#12171F" stroke-width="4.5" stroke-opacity=".75"/>
+  <path d="M40 200 L70 150 L100 120 L130 138 L160 96 L190 104 L220 70 L250 88 L280 62 L310 74 L340 58 L370 66 L400 52 L430 60 L460 54 L490 62 L520 56" fill="none" stroke="#FBBF24" stroke-width="2"/>
+  <path d="M40 214 L70 176 L100 150 L130 162 L160 128 L190 134 L220 106 L250 118 L280 96 L310 104 L340 92 L370 98 L400 86 L430 92 L460 88 L490 94 L520 90" fill="none" stroke="#FBBF24" stroke-width="1.3" stroke-opacity=".45" stroke-dasharray="3 3"/>
+  <line x1="178" y1="30" x2="178" y2="240" stroke="#E6EDF3" stroke-opacity=".45" stroke-dasharray="3 3"/>
+  <g fill="#8B95A3" font-size="10.5">
+    <text x="34" y="36" text-anchor="end" fill="#FBBF24">100%</text><text x="34" y="244" text-anchor="end" fill="#FBBF24">0</text>
+    <text x="526" y="36" fill="#7D8792">28G</text><text x="526" y="244" fill="#7D8792">0</text>
+  </g>
+  <g stroke="#3B4452" fill="#8B95A3" font-size="11.5">
+    <line x1="520" y1="56" x2="600" y2="56"/><text x="606" y="60" fill="#FBBF24">GPU 사용률 — 실선, 좌축 0~100%</text>
+    <line x1="490" y1="94" x2="600" y2="80" stroke-dasharray="2 2"/><text x="606" y="84">Compute 엔진 — 점선</text>
+    <line x1="300" y1="126" x2="600" y2="112" stroke-dasharray="2 2"/><text x="606" y="116">전용 VRAM — 솔리드 적층 하단</text>
+    <line x1="300" y1="112" x2="600" y2="140" stroke-dasharray="2 2"/><text x="606" y="144">공유 메모리 — 해치 적층 상단</text>
+    <line x1="470" y1="100" x2="600" y2="172" stroke-dasharray="2 2"/><text x="606" y="176" fill="#F87171">용량선 초과 = 시스템 RAM 스필오버</text>
+    <text x="606" y="194" fill="#5E6773">→ 성능 급락의 가장 흔한 원인</text>
+    <line x1="178" y1="240" x2="600" y2="220" stroke-dasharray="2 2"/><text x="606" y="224">리셋 마커</text>
+  </g>
+  <text x="40" y="272" fill="#C3CCD6" font-size="12">축 스케일 규칙</text>
+  <text x="40" y="292" fill="#8B95A3" font-size="11">외장: 우축 상한 = max(전용 VRAM × 1.15, (전용+공유) × 1.10) — 용량선이 상단 근처에 고정되어 "얼마나 남았는지"가 위치로 읽힌다.</text>
+  <text x="40" y="310" fill="#8B95A3" font-size="11">내장: 용량선·스필오버 경고 없음. 공유 메모리를 쓰는 것이 정상 동작이므로 외장 규칙을 적용하면 상시 경고가 된다.</text>
+</svg>
+</div>
+<div class="note"><b>왜 합계 축이 아니라 전용 용량을 기준선으로 두는가</b> — 전용+공유 합계를 축 최대값으로 쓰면 VRAM이 꽉 찼는지가 그래프 높이로 드러나지 않는다. 용량선을 고정 기준으로 두면 "선에 닿았다 / 넘었다"라는 <b>이진 판단</b>이 형태만으로 가능해진다.</div>
+
+<h2 data-n="13">디스크 카드</h2>
+<div class="grid2">
+  <div class="panel">
+    <h3 style="margin-top:0">물리 디스크별 카드 — 합산하지 않는다</h3>
+    <p>디스크를 합산하면 "NVMe가 놀고 있는데 백업용 HDD가 포화됐다" 같은 중요한 상황이 평균에 묻힌다. 장치 특성이 너무 달라(NVMe 7GB/s vs HDD 200MB/s) 같은 축에 올리는 것 자체가 부적절하다.</p>
+    <p style="font-size:13px;color:var(--page-dim)">개수 문제는 <b>기본 접힘 + 자동 접힘 + 프리셋</b>이 처리한다. 네트워크도 같은 이유로 분리했다(§09).</p>
+  </div>
+  <div class="panel">
+    <h3 style="margin-top:0">포화는 처리량이 아니라 활성 시간으로</h3>
+    <p>처리량이 낮아도 디스크는 포화될 수 있다(작은 랜덤 I/O). 활성 시간·큐·응답시간은 차트에 그리지 않고 두 곳에 둔다.</p>
+    <ul style="font-size:14px">
+      <li><b>오버레이</b> — 활성 %, 큐 길이, 평균 응답 ms, 버스 종류</li>
+      <li><b>경고 상태</b> — 활성 시간 95% 이상 3초 지속 → Alert</li>
+    </ul>
+  </div>
+</div>
+
+<h2 data-n="14">컬러 토큰</h2>
+<h3>표면 · 텍스트</h3>
+<div class="tokens">
+  <div class="tok"><div class="sw" style="background:#0E1116"></div><div class="meta"><b>Bg</b><span>#0E1116 / #F4F6F9</span></div></div>
+  <div class="tok"><div class="sw" style="background:#161B22"></div><div class="meta"><b>Surface</b><span>#161B22 / #FFFFFF</span></div></div>
+  <div class="tok"><div class="sw" style="background:#1C232C"></div><div class="meta"><b>Surface2</b><span>#1C232C / #EFF2F6</span></div></div>
+  <div class="tok"><div class="sw" style="background:#262D38"></div><div class="meta"><b>Line</b><span>#262D38 / #DDE3EA</span></div></div>
+  <div class="tok"><div class="sw" style="background:#E6EDF3"></div><div class="meta"><b>Fg</b><span>#E6EDF3 / #11161C</span></div></div>
+  <div class="tok"><div class="sw" style="background:#7D8792"></div><div class="meta"><b>Dim</b><span>#7D8792 / #68727F</span></div></div>
+</div>
+<h3>지표 강조색 — 차트 · 푸터 · 상태 점</h3>
+<div class="tokens">
+  <div class="tok"><div class="sw" style="background:linear-gradient(90deg,#38BDF8 50%,#0284C7 50%)"></div><div class="meta"><b>Accent.Cpu</b><span>#38BDF8 / #0284C7</span></div></div>
+  <div class="tok"><div class="sw" style="background:linear-gradient(90deg,#A78BFA 50%,#7C3AED 50%)"></div><div class="meta"><b>Accent.Mem</b><span>#A78BFA / #7C3AED</span></div></div>
+  <div class="tok"><div class="sw" style="background:linear-gradient(90deg,#34D399 50%,#059669 50%)"></div><div class="meta"><b>Accent.Net</b><span>#34D399 / #059669</span></div></div>
+  <div class="tok"><div class="sw" style="background:linear-gradient(90deg,#F472B6 50%,#DB2777 50%)"></div><div class="meta"><b>Accent.Disk</b><span>#F472B6 / #DB2777</span></div></div>
+  <div class="tok"><div class="sw" style="background:linear-gradient(90deg,#FBBF24 50%,#B45309 50%)"></div><div class="meta"><b>Accent.Gpu</b><span>#FBBF24 / #B45309</span></div></div>
+  <div class="tok"><div class="sw" style="background:linear-gradient(90deg,#F87171 50%,#DC2626 50%)"></div><div class="meta"><b>Warn</b><span>#F87171 / #DC2626</span></div></div>
+</div>
+<h3>제조사 색 — 아이콘 전용</h3>
+<div class="tokens">
+  <div class="tok"><div class="sw" style="background:linear-gradient(90deg,#7FBC03 50%,#5C8A00 50%)"></div><div class="meta"><b>Vendor.Nvidia</b><span>#7FBC03 / #5C8A00</span></div></div>
+  <div class="tok"><div class="sw" style="background:linear-gradient(90deg,#F5333C 50%,#C81018 50%)"></div><div class="meta"><b>Vendor.Amd</b><span>#F5333C / #C81018</span></div></div>
+  <div class="tok"><div class="sw" style="background:linear-gradient(90deg,#2B7FFF 50%,#0F62C8 50%)"></div><div class="meta"><b>Vendor.Intel</b><span>#2B7FFF / #0F62C8</span></div></div>
+  <div class="tok"><div class="sw" style="background:linear-gradient(90deg,#FBBF24 50%,#B45309 50%)"></div><div class="meta"><b>Vendor.Other</b><span>Accent.Gpu 재사용</span></div></div>
+</div>
+<p style="font-size:13px;color:var(--page-dim)">스와치 좌/우 = 다크/라이트. 제조사 색은 아이콘 글리프와 인덱스 배지에만 적용된다.</p>
+
+<h3>차트 채움 알파</h3>
+<table>
+  <tr><th>요소</th><th>알파</th><th>이유</th></tr>
+  <tr><td>영역 상단 라인</td><td>100%, 1.5px</td><td>형태 인지의 주 채널</td></tr>
+  <tr><td>영역 그라데이션</td><td>28% → 0%</td><td>부피감만 주고 격자를 가리지 않음</td></tr>
+  <tr><td>GPU 전용 메모리</td><td>솔리드 20%</td><td>사용률 라인보다 뒤에</td></tr>
+  <tr><td>GPU 공유 메모리</td><td>해치 30%</td><td>색약 사용자를 위한 패턴 구분</td></tr>
+  <tr><td>GPU 사용률 라인 헤일로</td><td>Surface 75%, 4px</td><td>누적 영역 위에서 라인이 묻히지 않게</td></tr>
+  <tr><td>격자선</td><td>Line 색 60%</td><td>3분할 수평선만</td></tr>
+  <tr><td>리셋 마커</td><td>Fg 45%, 1px 파선</td><td>데이터를 가리지 않는 선에서 명확히</td></tr>
+  <tr><td>스크럽선</td><td>Fg 55%, 1px 파선 + 계열 색 3px 점</td><td>값이 읽히는 지점을 계열 색으로</td></tr>
+</table>
+
+<h2 data-n="15">상태 정의</h2>
+<table>
+  <tr><th>상태</th><th>시각 처리</th><th>발생 조건</th></tr>
+  <tr><td>Normal</td><td>기본 색, 저채도 배경</td><td>—</td></tr>
+  <tr><td>Hover (카드)</td><td>테두리 1단계 밝아짐 + 개별 리셋 아이콘 + <b>0.25초 후 장치 이름 표시</b>, 더 머물면 전체 사양 툴팁</td><td>커서가 카드 위</td></tr>
+  <tr><td>Scrub</td><td>전 카드 스크럽선 + 오버레이, 헤더 값에 점 프리픽스</td><td>커서가 차트 위 또는 고정</td></tr>
+  <tr><td>Labels</td><td>헤더에 라벨 3초 노출 후 300ms 페이드</td><td>최초 실행 / 새 장치 / <code>L</code> 유지</td></tr>
+  <tr><td><b>New device</b><span class="new">v0.4</span></td><td>320ms 페이드 인 + 라벨 3초</td><td>장치 추가 감지</td></tr>
+  <tr><td><b>Alert</b></td><td>테두리 Warn 55% + 외곽 글로우 (접힌 상태에서도)</td><td>GPU 스필오버(외장만) / 디스크 활성 95% 3초 / 메모리 95% / CPU 30초 평균 95%</td></tr>
+  <tr><td>Collapsed</td><td>28px 스트립 — 아이콘 + 스파크라인 + 값. 스파크라인은 <b>자체 창 최대값 기준 상대 스케일</b></td><td>사용자 접기 또는 프리셋</td></tr>
+  <tr><td>Auto-collapsed</td><td>위와 같되 <b>점선 테두리</b></td><td>공간 부족. 공간이 생기면 자동 복원</td></tr>
+  <tr><td>Unavailable</td><td>접힌 채 고정, opacity 40%, 스파크라인 자리에 0선</td><td>센서 실패, 드라이버 없음, <b>인터페이스 Down</b></td></tr>
+  <tr><td>Stale</td><td>차트 우측 끝이 회색으로 페이드</td><td>마지막 샘플이 2주기 이상 경과</td></tr>
+  <tr><td>Hidden</td><td>카드 제거, 남은 카드가 높이 흡수</td><td>장치 제거 / 5분 무트래픽 인터페이스 / 사용자 숨김</td></tr>
+  <tr><td>Occluded</td><td>렌더 중단 (샘플링은 계속)</td><td>최소화 또는 완전히 가려짐</td></tr>
+</table>
+
+<h2 data-n="16">타이포그래피 · 아이콘 사양</h2>
+<table>
+  <tr><th>용도</th><th>폰트</th><th>크기</th><th>비고</th></tr>
+  <tr><td>현재값 (펼침)</td><td>Cascadia Mono</td><td>26px / 600</td><td><code>tabular-nums</code> 필수</td></tr>
+  <tr><td>현재값 (접힘)</td><td>Cascadia Mono</td><td>14px / 600</td><td></td></tr>
+  <tr><td>단위 기호</td><td>Segoe UI Variable</td><td>11px / 500, Dim</td><td></td></tr>
+  <tr><td>통계 푸터</td><td>Cascadia Mono</td><td>10.5px, Dim</td><td><code>~ ▲ ▼</code>. 네트워크·디스크는 <code>▼</code> 대신 <code>↑</code>, GPU는 <code>▪</code> 추가</td></tr>
+  <tr><td>라벨 (페이드)</td><td>Segoe UI Variable</td><td>10.5px, Dim</td><td>최대 150px 후 말줄임</td></tr>
+  <tr><td>오버레이</td><td>Cascadia Mono</td><td>9.5px</td><td>라벨 Dim, 값 Fg, 주의는 Warn</td></tr>
+  <tr><td>경과 시간</td><td>Cascadia Mono</td><td>15px, Fg</td><td><code>mm:ss</code></td></tr>
+  <tr><td>인덱스 배지</td><td>Cascadia Mono</td><td>8px / 700</td><td>외장=채움, 내장=외곽선</td></tr>
+</table>
+<p>아이콘은 <b>16px 그리드, 1.7px 스트로크, 라운드 캡의 단색 라인 아이콘</b>으로 통일한다. 제조사 글리프도 같은 규칙을 따르며 획 수를 4개 이하로 유지한다.</p>
+
+<h2 data-n="17">모션</h2>
+<table>
+  <tr><th>대상</th><th>지속</th><th>이징</th><th>비고</th></tr>
+  <tr><td>카드 접기/펼치기</td><td>180ms</td><td>cubic-bezier(.4,0,.2,1)</td><td>높이만</td></tr>
+  <tr><td>프리셋 전환</td><td>180ms</td><td>동일</td><td>여러 카드가 동시에 움직여도 같은 타이밍</td></tr>
+  <tr><td>"최소" 프리셋 창 높이</td><td>220ms</td><td>동일</td><td>카드 전환과 겹쳐 하나의 동작으로</td></tr>
+  <tr><td><b>장치 추가</b></td><td>320ms</td><td>ease-out</td><td>위에서 6px 슬라이드 + 페이드 인</td></tr>
+  <tr><td><b>장치 제거</b></td><td>180ms</td><td>ease-in</td><td>페이드 아웃 후 높이 재분배</td></tr>
+  <tr><td>라벨 페이드</td><td>3000ms 유지 → 300ms out</td><td>ease-out</td><td></td></tr>
+  <tr><td>Y축 스케일 변경</td><td>300ms</td><td>ease-out</td><td>축이 튀면 형태 비교가 깨진다</td></tr>
+  <tr><td>오버레이</td><td>120ms / 120ms 지연 후 소멸</td><td>ease-out</td><td>카드 사이를 빠르게 지날 때 깜빡이지 않게</td></tr>
+  <tr><td>리셋 아이콘 회전</td><td>450ms</td><td>cubic-bezier(.4,0,.2,1)</td><td>−360°</td></tr>
+  <tr><td>경고 진입</td><td>200ms</td><td>ease-out</td><td>깜빡임 금지</td></tr>
+</table>
+<div class="note">접근성 "동작 줄이기"가 켜져 있으면 위 모션을 <b>전부</b> 제거한다. 단 <b>라벨 페이드의 3초 표시 시간은 유지</b>한다 — 정보 전달이 목적이지 장식이 아니다.</div>
+
+<h2 data-n="18">접근성</h2>
+<ul>
+  <li>대비: 본문 4.5:1, 그래픽 요소 3:1 이상 (다크·라이트 양쪽 검증)</li>
+  <li>색상 단독 정보 전달 금지 — GPU 전용/공유는 <b>솔리드 vs 해치</b>, 제조사는 <b>색 + 글리프 모양</b>, 어댑터는 <b>인덱스 배지</b>, 디스크·네트워크는 <b>종류 글리프</b>, 지표는 <b>순서 고정</b></li>
+  <li>적록색약 사용자에게 NVIDIA 그린과 AMD 레드는 구분이 어려울 수 있다 — 그래서 <b>글리프 모양이 1차 채널, 색은 보조</b>다. 색을 제거해도 정보 손실이 없어야 한다</li>
+  <li>아이콘만으로 식별이 안 되는 사용자를 위한 탈출구 — <code>L</code> 유지, hover 툴팁, 설정의 "라벨 항상 표시"</li>
+  <li>키보드: <code>Tab</code> = 리셋 → 카드 순서 → 타이틀바. <code>Space</code>/<code>Enter</code> 접기, <code>1</code>~<code>9</code> 카드 토글, <code>Ctrl+1</code>~<code>9</code> 프리셋, <code>←</code><code>→</code> 스크럽, <code>Esc</code> 해제</li>
+  <li>스크린 리더: 축약 없는 전체 문장. <b>장치 추가·제거는 <code>LiveRegion</code>으로 알린다</b> — 시각적으로는 카드 등장이 알림이지만 스크린 리더 사용자에게는 보이지 않으므로</li>
+  <li>접힌 카드도 스크린 리더에서는 전체 값이 읽힌다</li>
+</ul>
+
+<h2 data-n="19">열린 UX 질문</h2>
+<ol>
+  <li>제조사 글리프의 <b>식별 정확도 검증</b> — 16px에서 NVIDIA/AMD/Intel이 실제로 구분되는지. 실패하면 배지에 이니셜(N/A/I)을 넣는 안으로 후퇴</li>
+  <li>VPN 이중 계상을 <b>차트에서도</b> 표현할지 — 예: VPN 카드의 영역을 하위 인터페이스 카드에 옅은 오버레이로 겹쳐 그리기. 정보는 늘지만 복잡도가 크게 는다</li>
+  <li>프리셋을 <b>워크로드 자동 감지</b>로 전환할지 — Compute 사용률이 30초 이상 높으면 "AI 워크로드" 자동 적용. 편하지만 예측 불가능성이 생긴다</li>
+  <li>장치가 12개를 넘는 워크스테이션 — 종류별 요약 카드 + 개별 펼치기 모드가 필요할지</li>
+</ol>
+
+</div>
+
+<script>
+(() => {
+  const N=240, TICK=200, GB=1024**3, MIN_EXPANDED=118, COLLAPSED_H=28, HDR=76, PAD=16, GAP=8;
+  const VRAM0=24*GB, IGPU_DED=0.5*GB, IGPU_SHARED=8*GB, VRAM2=16*GB;
+
+  const ICONS={
+    cpu:'<path d="M6 2v2M10 2v2M6 12v2M10 12v2M2 6h2M2 10h2M12 6h2M12 10h2"/><rect x="4" y="4" width="8" height="8" rx="1.5"/>',
+    mem:'<rect x="2" y="3" width="12" height="4" rx="1"/><rect x="2" y="9" width="12" height="4" rx="1"/><path d="M4.5 5h.01M4.5 11h.01"/>',
+    // 네트워크 — 연결 종류
+    eth:'<rect x="4" y="5.5" width="8" height="6" rx="1"/><path d="M6.5 5.5V3.4h3v2.1"/><path d="M5.9 8v1.6M8 8v1.6M10.1 8v1.6"/>',
+    wifi:'<path d="M2.4 6.3a8.6 8.6 0 0111.2 0"/><path d="M4.8 8.9a5.2 5.2 0 016.4 0"/><path d="M8 12.2h.01"/>',
+    vpn:'<path d="M8 2.3 13 4.2v4c0 3-2.1 5.1-5 5.7-2.9-.6-5-2.7-5-5.7v-4z"/><circle cx="8" cy="7.5" r="1"/><path d="M8 8.5v1.7"/>',
+    cell:'<path d="M3 12.6v-2.2M6.3 12.6V7.9M9.7 12.6V5.2M13 12.6V2.6"/>',
+    net:'<path d="M5 13V4M5 4L2.5 6.5M5 4l2.5 2.5M11 3v9M11 12l2.5-2.5M11 12l-2.5-2.5"/>',
+    // 디스크 — 매체
+    ssd:'<rect x="2" y="3.5" width="12" height="8" rx="1.5"/><path d="M4.8 6.3h6.4M4.8 8.7h3.6"/><path d="M5 11.5v2M8 11.5v2M11 11.5v2"/>',
+    hdd:'<circle cx="8" cy="8" r="5.8"/><circle cx="8" cy="8" r="1.4"/><path d="M12.6 12.6 9.3 9.3"/>',
+    drive:'<rect x="2" y="4.5" width="12" height="7" rx="1.5"/><path d="M4.6 8h.01"/><path d="M8 8h3.4"/>',
+    // GPU — 제조사
+    nvidia:'<path d="M2.4 8.6c1.7-3.1 4.3-4.9 7-4.9 2.6 0 4.2 1.4 4.2 3.3 0 3-3.3 5.3-6.6 5.3-1.9 0-3-.9-3-2.2 0-1.9 2.1-3.6 4.4-3.6"/><path d="M8.4 6.5c1 0 1.7.5 1.7 1.4"/>',
+    amd:'<path d="M13.4 2.6v10.8"/><path d="M13.4 2.6 3 13.4"/><path d="M8.3 2.6 3.1 7.8"/><path d="M10.9 2.6 3 10.5"/>',
+    intel:'<circle cx="8" cy="8" r="5.9"/><path d="M8 7.3v3.6"/><path d="M8 4.9h.01"/>',
+    gpu:'<rect x="2" y="4" width="12" height="9" rx="1.5"/><rect x="5" y="7" width="6" height="3" rx=".5"/><path d="M5 4V2M11 4V2"/>'
+  };
+
+  const preview=(host,items,color)=>{
+    document.getElementById(host).innerHTML=items.map(i=>
+      `<div class="iconcell"><span class="big" style="color:${i.c||color}"><svg viewBox="0 0 16 16">${ICONS[i.k]}</svg></span>
+       <div class="nm">${i.n}</div><div class="sb">${i.s}</div></div>`).join('');
+  };
+  preview('iconGpu',[
+    {k:'nvidia',n:'NVIDIA',s:'0x10DE · 소용돌이 · 그린',c:'#7FBC03'},
+    {k:'amd',n:'AMD',s:'0x1002 · 사선 화살표 · 레드',c:'#F5333C'},
+    {k:'intel',n:'Intel',s:'0x8086 · 원 안의 i · 블루',c:'#2B7FFF'},
+    {k:'gpu',n:'미상',s:'기타 벤더 · 앰버 폴백',c:'#FBBF24'}],'#FBBF24');
+  preview('iconDisk',[
+    {k:'ssd',n:'SSD',s:'IncursSeekPenalty = FALSE'},
+    {k:'hdd',n:'HDD',s:'IncursSeekPenalty = TRUE'},
+    {k:'drive',n:'이동식 / 미상',s:'판정 실패 · USB · 가상'}],'#F472B6');
+  preview('iconNet',[
+    {k:'eth',n:'이더넷',s:'IF_TYPE_ETHERNET_CSMACD'},
+    {k:'wifi',n:'Wi-Fi',s:'IF_TYPE_IEEE80211'},
+    {k:'vpn',n:'VPN / 터널',s:'식별 후 제외 (§09)'},
+    {k:'cell',n:'셀룰러',s:'IF_TYPE_WWANPP'},
+    {k:'net',n:'기타 / 가상',s:'Hyper-V · WSL · BT PAN'}],'#34D399');
+
+  // ── 시뮬레이션 상태 ─────────────────────────
+  const arr=()=>new Float32Array(N);
+  const mkNet=()=>({rx:arr(),tx:arr()});
+  const mkDisk=()=>({r:arr(),w:arr(),a:arr(),q:arr()});
+  const mkGpu=(ded,shared,discrete)=>({ded,shared,discrete,u:arr(),c:arr(),d3:arr(),cp:arr(),gd:arr(),gs:arr(),t:arr(),p:arr(),clk:arr()});
+  const S={paused:false,spill:0,resetAt:Date.now(),markers:[],filled:0,memTotal:32*GB,
+    cpu:arr(),cores:Array.from({length:8},arr),mem:arr(),commit:arr(),
+    nets:[mkNet(),mkNet(),mkNet()],
+    disks:[mkDisk(),mkDisk()],
+    gpus:[mkGpu(VRAM0,16*GB,true),mkGpu(IGPU_DED,IGPU_SHARED,false),mkGpu(VRAM2,16*GB,true)],
+    stats:{}};
+
+  const STAT_KEYS=['cpu','mem','n0r','n0t','n1r','n1t','n2r','n2t','d0r','d0w','d1r','d1w','g0u','g1u','g2u'];
+  const newStat=()=>({n:0,sum:0,min:Infinity,max:-Infinity});
+  STAT_KEYS.forEach(k=>S.stats[k]=newStat());
+  const add=(k,v)=>{const s=S.stats[k];s.n++;s.sum+=v;if(v<s.min)s.min=v;if(v>s.max)s.max=v;};
+  function resetStats(){STAT_KEYS.forEach(k=>S.stats[k]=newStat());S.resetAt=Date.now();S.markers.push(N-1);}
+
+  const sim={cpu:34,cores:new Array(8).fill(30),mem:.52,phase:0,
+    n:[{rx:0,tx:0},{rx:0,tx:0},{rx:0,tx:0}],
+    d:[{r:0,w:0,a:10,q:.3},{r:0,w:0,a:4,q:.2}],
+    g:[{u:62,c:48,d:9*GB,dT:9*GB,s:0,t:64,p:180,clk:2400},
+       {u:14,c:6,d:.2*GB,dT:.25*GB,s:1.2*GB,t:52,p:12,clk:1300},
+       {u:38,c:30,d:5*GB,dT:5*GB,s:0,t:58,p:140,clk:2100}]};
+  const clamp=(v,a,b)=>v<a?a:v>b?b:v, rnd=(a,b)=>a+Math.random()*(b-a);
+  const push=(a,v)=>{a.copyWithin(0,1);a[N-1]=v;};
+
+  function step(){
+    sim.phase+=0.02;
+    sim.cpu=clamp(sim.cpu+rnd(-7,7)+Math.sin(sim.phase*1.7)*3+(Math.random()<.02?rnd(15,40):0),3,99);
+    for(let i=0;i<8;i++) sim.cores[i]=clamp(sim.cpu+rnd(-28,28),0,100);
+    sim.mem=clamp(sim.mem+rnd(-.004,.006)-(Math.random()<.01?rnd(.02,.06):0),.35,.93);
+
+    // 0 = 이더넷(주 경로), 1 = Wi-Fi(보조), 2 = VPN(이더넷 트래픽의 부분집합 → 이중 계상 시연)
+    const e=sim.n[0];
+    e.rx=clamp(e.rx*0.72+(Math.random()<.06?rnd(40e6,220e6):rnd(0,8e6)),0,300e6);
+    e.tx=clamp(e.tx*0.75+(Math.random()<.05?rnd(4e6,30e6):rnd(0,2e6)),0,60e6);
+    const w=sim.n[1];
+    w.rx=clamp(w.rx*0.78+(Math.random()<.07?rnd(3e6,32e6):rnd(0,1.5e6)),0,45e6);
+    w.tx=clamp(w.tx*0.8+(Math.random()<.04?rnd(.5e6,6e6):rnd(0,.4e6)),0,12e6);
+    const v=sim.n[2];
+    v.rx=e.rx*rnd(.35,.55); v.tx=e.tx*rnd(.3,.5);
+
+    const d0=sim.d[0];
+    d0.r=clamp(d0.r*0.65+(Math.random()<.12?rnd(400e6,3.2e9):rnd(0,40e6)),0,5e9);
+    d0.w=clamp(d0.w*0.7+(Math.random()<.07?rnd(80e6,900e6):rnd(0,12e6)),0,2e9);
+    d0.a=clamp(d0.a*0.6+((d0.r+d0.w)/3.5e9)*100*rnd(.7,1.3)+rnd(0,5),0,100);
+    d0.q=clamp(d0.q*0.6+d0.a/100*rnd(0,7),0,12);
+    const d1=sim.d[1];
+    d1.r=clamp(d1.r*0.8+(Math.random()<.05?rnd(20e6,150e6):rnd(0,3e6)),0,220e6);
+    d1.w=clamp(d1.w*0.85+(Math.random()<.09?rnd(40e6,180e6):rnd(0,2e6)),0,220e6);
+    d1.a=clamp(d1.a*0.7+((d1.r+d1.w)/2.0e8)*100*rnd(.8,1.4)+rnd(0,4),0,100);
+    d1.q=clamp(d1.q*0.7+d1.a/100*rnd(0,4),0,8);
+
+    const g0=sim.g[0];
+    g0.u=clamp(g0.u+rnd(-9,9)+Math.sin(sim.phase*0.9)*6+(Math.random()<.015?rnd(-30,25):0),5,100);
+    g0.c=clamp(g0.u*rnd(.62,.94),0,100);
+    if(S.spill>0) g0.dT=VRAM0*0.99; else if(Math.random()<.018) g0.dT=rnd(4,22)*GB;
+    g0.d+=(g0.dT-g0.d)*0.10+rnd(-.03,.03)*GB; g0.d=clamp(g0.d,1.5*GB,VRAM0);
+    let s0=0;
+    if(S.spill>0){s0=rnd(2.4,3.2)*GB;S.spill--;} else if(g0.d>VRAM0*0.86) s0=rnd(.2,.9)*GB;
+    g0.s+=(s0-g0.s)*0.07; g0.s=clamp(g0.s,0,8*GB);
+    g0.t+=((52+g0.u*0.34)-g0.t)*0.05+rnd(-.3,.3);
+    g0.p+=((40+g0.u*3.4)-g0.p)*0.12+rnd(-6,6);
+    g0.clk+=((1600+g0.u*10)-g0.clk)*0.1+rnd(-20,20);
+
+    const g1=sim.g[1];
+    g1.u=clamp(g1.u+rnd(-6,6)+(Math.random()<.02?rnd(-10,30):0),1,72);
+    g1.c=clamp(g1.u*rnd(.2,.6),0,100);
+    if(Math.random()<.01) g1.dT=rnd(.1,.45)*GB;
+    g1.d+=(g1.dT-g1.d)*0.08; g1.d=clamp(g1.d,.05*GB,IGPU_DED);
+    g1.s+=((1.0+g1.u/72*2.6)*GB-g1.s)*0.06; g1.s=clamp(g1.s,0,IGPU_SHARED);
+    g1.t+=((44+g1.u*0.28)-g1.t)*0.05; g1.p+=((6+g1.u*0.22)-g1.p)*0.1; g1.clk+=((350+g1.u*14)-g1.clk)*0.1;
+
+    const g2=sim.g[2];
+    g2.u=clamp(g2.u+rnd(-8,8)+Math.sin(sim.phase*0.6)*5,3,98);
+    g2.c=clamp(g2.u*rnd(.5,.9),0,100);
+    if(Math.random()<.015) g2.dT=rnd(2,14)*GB;
+    g2.d+=(g2.dT-g2.d)*0.09; g2.d=clamp(g2.d,1*GB,VRAM2);
+    g2.s+=((g2.d>VRAM2*0.88?rnd(.1,.6)*GB:0)-g2.s)*0.06;
+    g2.t+=((50+g2.u*0.3)-g2.t)*0.05; g2.p+=((30+g2.u*2.6)-g2.p)*0.12; g2.clk+=((1500+g2.u*9)-g2.clk)*0.1;
+
+    push(S.cpu,sim.cpu); for(let i=0;i<8;i++) push(S.cores[i],sim.cores[i]);
+    push(S.mem,sim.mem*S.memTotal); push(S.commit,clamp(sim.mem+rnd(.05,.12),0,1)*S.memTotal);
+    S.nets.forEach((M,i)=>{push(M.rx,sim.n[i].rx);push(M.tx,sim.n[i].tx);});
+    S.disks.forEach((D,i)=>{const d=sim.d[i];push(D.r,d.r);push(D.w,d.w);push(D.a,d.a);push(D.q,d.q);});
+    S.gpus.forEach((G,i)=>{const g=sim.g[i];
+      push(G.u,g.u); push(G.c,g.c); push(G.d3,clamp(g.u-g.c,0,100)); push(G.cp,clamp(g.u*rnd(.02,.14),0,100));
+      push(G.gd,g.d); push(G.gs,g.s); push(G.t,g.t); push(G.p,g.p); push(G.clk,g.clk);});
+
+    S.filled=Math.min(S.filled+1,N);
+    S.markers=S.markers.map(x=>x-1).filter(x=>x>0);
+    add('cpu',sim.cpu); add('mem',sim.mem*100);
+    for(let i=0;i<3;i++){add('n'+i+'r',sim.n[i].rx);add('n'+i+'t',sim.n[i].tx);}
+    for(let i=0;i<2;i++){add('d'+i+'r',sim.d[i].r);add('d'+i+'w',sim.d[i].w);}
+    for(let i=0;i<3;i++) add('g'+i+'u',sim.g[i].u);
+  }
+  for(let i=0;i<N;i++) step();
+  S.markers=[]; resetStats(); S.markers=[];
+
+  // ── 포맷 ────────────────────────────────────
+  const f1=v=>v.toFixed(1);
+  const gib=b=>(b/GB).toFixed(b/GB>=10?1:2);
+  const mbs=b=>{const m=b/1e6;return m>=1000?(m/1000).toFixed(2):m>=100?m.toFixed(0):m.toFixed(1);};
+  const mbsU=b=>b/1e6>=1000?'G':'M';
+  const rate=b=>{const x=b*8;return x>=1e9?(x/1e9).toFixed(1):x>=1e6?(x/1e6).toFixed(x/1e6>=100?0:1):(x/1e3).toFixed(0);};
+  const rateU=b=>{const x=b*8;return x>=1e9?'G':x>=1e6?'M':'K';};
+  const scaleOf=(max,kind)=>{const x=kind==='bits'?max*8:max;return x>=1e9?{d:1e9,u:'G'}:x>=1e6?{d:1e6,u:'M'}:{d:1e3,u:'K'};};
+  const inScale=(v,s,kind)=>{const x=(kind==='bits'?v*8:v)/s.d;return x>=100?x.toFixed(0):x>=10?x.toFixed(1):x.toFixed(2);};
+  function elapsed(){const s=Math.floor((Date.now()-S.resetAt)/1000),h=Math.floor(s/3600),m=Math.floor(s/60)%60,ss=s%60,p=n=>String(n).padStart(2,'0');
+    return h>0?`${h}:${p(m)}:${p(ss)}`:`${p(m)}:${p(ss)}`;}
+
+  // ── 카드 카탈로그 ───────────────────────────
+  const ALL=[
+    {key:'cpu',  kind:'cpu',  icon:'cpu',  color:'--cpu',  weight:1,   prio:90, label:'CPU',
+       full:'Intel Core i9-14900K · 24코어 32스레드 · 3.2 GHz'},
+    {key:'mem',  kind:'mem',  icon:'mem',  color:'--mem',  weight:1,   prio:70, label:'메모리 32G',
+       full:'32 GiB DDR5-6000 · 2 × 16 GiB'},
+    {key:'net0', kind:'net', ni:0, icon:'eth',  color:'--net', weight:1, prio:50, label:'Ethernet 2.5G', netType:'eth',
+       full:'Intel Ethernet Controller I225-V · 2.5 Gbps · 연결됨'},
+    {key:'net1', kind:'net', ni:1, icon:'wifi', color:'--net', weight:1, prio:45, label:'Wi-Fi · HOME-5G', netType:'wifi',
+       full:'Intel Wi-Fi 6E AX211 · HOME-5G · 5GHz · 신호 78%'},
+    {key:'disk0',kind:'disk',di:0, icon:'ssd', color:'--disk', weight:1, prio:60, label:'990 PRO NVMe', bus:'NVMe',
+       full:'Samsung SSD 990 PRO 2TB · NVMe · PCIe 4.0 x4'},
+    {key:'disk1',kind:'disk',di:1, icon:'hdd', color:'--disk', weight:1, prio:55, label:'ST8000 HDD', bus:'SATA',
+       full:'Seagate ST8000DM004 8TB · SATA III · 5400rpm'},
+    {key:'gpu0', kind:'gpu', gi:0, icon:'nvidia', color:'--gpu', vcolor:'--v-nvidia', weight:1.5, prio:100, label:'RTX 4090',
+       full:'NVIDIA GeForce RTX 4090 · 외장 · 24 GiB GDDR6X · 드라이버 566.36'},
+    {key:'gpu1', kind:'gpu', gi:1, icon:'intel',  color:'--gpu', vcolor:'--v-intel',  weight:1.5, prio:80,  label:'Iris Xe',
+       full:'Intel Iris Xe Graphics · 내장 · 공유 메모리 8 GiB'},
+    {key:'gpu2', kind:'gpu', gi:2, icon:'amd',    color:'--gpu', vcolor:'--v-amd',    weight:1.5, prio:80,  label:'RX 7900 XTX',
+       full:'AMD Radeon RX 7900 XTX · eGPU (Thunderbolt) · 16 GiB'}
+  ];
+  const DEF=Object.fromEntries(ALL.map(c=>[c.key,c]));
+  const ORDER=['cpu','mem','net0','net1','disk0','disk1','gpu0','gpu1','gpu2'];
+  // 현재 연결된 장치 (gpu2 = eGPU 는 처음엔 없음). VPN/터널은 카드로 만들지 않는다
+  let present=['cpu','mem','net0','net1','disk0','disk1','gpu0','gpu1'];
+  const cardsOf=()=>ORDER.filter(k=>present.includes(k)).map(k=>DEF[k]);
+
+  // 프리셋은 장치 인스턴스가 아니라 규칙으로 저장한다
+  const PRESETS={
+    default:d=>({cpu:0,mem:0,net:d.ni===0?0:1,disk:d.di===0?0:1,gpu:d.gi===0?0:1}[d.kind]),
+    ai:     d=>({cpu:1,mem:0,net:1,disk:d.di===0?0:1,gpu:0}[d.kind]),
+    render: d=>({cpu:0,mem:1,net:1,disk:1,gpu:d.gi===0?0:1}[d.kind]),
+    io:     d=>({cpu:1,mem:1,net:0,disk:0,gpu:1}[d.kind]),
+    min:    ()=>1
+  };
+  let curPreset='default';
+
+  function appHTML(){
+    const ic=p=>`<span class="ticon"><svg viewBox="0 0 16 16">${p}</svg></span>`;
+    return `<div class="tbar"><span class="brand"></span>
+      <span class="ticon on"><svg viewBox="0 0 16 16"><path d="M8 10v4M5 3h6l-1 5 2 2H4l2-2z"/></svg></span>
+      ${ic('<rect x="2" y="3" width="12" height="3" rx="1"/><rect x="2" y="8.5" width="7" height="3" rx="1"/><path d="M2 13.5h4"/>')}
+      ${ic('<path d="M8 2.5a5.5 5.5 0 100 11 4.2 4.2 0 010-11z"/>')}${ic('<path d="M3.5 8.5h9"/>')}${ic('<path d="M4 4l8 8M12 4l-8 8"/>')}</div>
+    <div class="gbar">
+      <button class="resetbtn" data-reset><svg viewBox="0 0 16 16"><path d="M13 8a5 5 0 11-1.6-3.7M13 2v3h-3"/></svg></button>
+      <span class="elapsed" data-elapsed>00:00</span><span class="dots" data-dots></span>
+    </div>
+    <div class="cards" data-cards></div>`;
+  }
+  function cardHTML(c){
+    const isG=c.kind==='gpu';
+    const ic=c.vcolor||c.color;
+    const badge = isG ? `<span class="gidx${S.gpus[c.gi].discrete?'':' igpu'}">${c.gi}</span>`
+               : c.kind==='disk' ? `<span class="gidx">${c.di}</span>`
+               : c.kind==='net'  ? `<span class="gidx">${c.ni}</span>` : '';
+    const legend = isG ? `<span class="legend" style="color:var(--gpu)"><span class="lg" style="background:currentColor;opacity:.5"></span><span class="lg hatch"></span></span>` : '';
+    return `<div class="card c-${c.key}" data-card="${c.key}" title="${c.full||c.label}">
+      <div class="chead" data-head>
+        <span class="cicon" style="color:var(${ic})"><svg viewBox="0 0 16 16">${ICONS[c.icon]}</svg>${badge}</span>
+        ${legend}<span class="clabel">${c.label}</span>
+        <canvas class="spark" data-spark></canvas>
+        <span class="chev"><svg viewBox="0 0 16 16"><path d="M4 6l4 4 4-4"/></svg></span>
+        <span class="cval" data-val>0<span class="cunit" data-unit>%</span></span>
+      </div>
+      <div class="canvasbox" data-box><canvas data-canvas></canvas><div class="ovl" data-ovl></div></div>
+      <div class="cfoot"><span data-foot></span><span class="scale" data-scale></span></div>
+    </div>`;
+  }
+
+  // ── 캔버스 헬퍼 ─────────────────────────────
+  function fit(cv){
+    const dpr=window.devicePixelRatio||1,r=cv.getBoundingClientRect();
+    const w=Math.max(1,Math.round(r.width*dpr)),h=Math.max(1,Math.round(r.height*dpr));
+    if(cv.width!==w||cv.height!==h){cv.width=w;cv.height=h;}
+    const ctx=cv.getContext('2d');ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,r.width,r.height);
+    return {ctx,w:r.width,h:r.height};
+  }
+  function grid(ctx,w,h,c){ctx.strokeStyle=c;ctx.lineWidth=1;for(let i=1;i<3;i++){const y=Math.round(h*i/3)+.5;ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(w,y);ctx.stroke();}}
+  function poly(ctx,d,w,h,fy){ctx.beginPath();for(let i=0;i<N;i++){const x=w*i/(N-1),y=fy(d[i]);i?ctx.lineTo(x,y):ctx.moveTo(x,y);}}
+  function markers(ctx,w,h,c){ctx.save();ctx.strokeStyle=c;ctx.lineWidth=1;ctx.setLineDash([3,3]);
+    for(const m of S.markers){const x=Math.round(w*m/(N-1))+.5;ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,h);ctx.stroke();}ctx.restore();}
+  function scrub(ctx,w,h,idx,pts,C){
+    if(idx==null)return;
+    const x=Math.round(w*idx/(N-1))+.5;
+    ctx.save();ctx.setLineDash([3,3]);ctx.strokeStyle=C.fg+'8C';ctx.lineWidth=1;
+    ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,h);ctx.stroke();ctx.restore();
+    for(const p of pts){ctx.beginPath();ctx.arc(x,p.y,3,0,6.283);ctx.fillStyle=p.c;ctx.fill();}
+  }
+  function areaFill(ctx,d,w,h,fy,color,a){
+    poly(ctx,d,w,h,fy);ctx.lineTo(w,h);ctx.lineTo(0,h);ctx.closePath();
+    const g=ctx.createLinearGradient(0,0,0,h);g.addColorStop(0,color+a);g.addColorStop(1,color+'00');
+    ctx.fillStyle=g;ctx.fill();
+    poly(ctx,d,w,h,fy);ctx.strokeStyle=color;ctx.lineWidth=1.5;ctx.stroke();
+  }
+  function hatch(ctx,color){
+    const p=document.createElement('canvas');p.width=p.height=6;
+    const c=p.getContext('2d');c.strokeStyle=color;c.lineWidth=1.6;
+    c.beginPath();c.moveTo(-2,6);c.lineTo(6,-2);c.moveTo(1,9);c.lineTo(9,1);c.stroke();
+    return ctx.createPattern(p,'repeat');
+  }
+  const STEPS_BITS=[1e6,5e6,10e6,25e6,50e6,100e6,250e6,500e6,1e9,2.5e9].map(x=>x/8);
+  const STEPS_BYTES=[50e6,100e6,250e6,500e6,1e9,2e9,4e9,8e9];
+  function pickMax(a,b,steps){let pk=0;for(let i=0;i<N;i++){pk=Math.max(pk,a[i],b[i]);}return steps.find(s=>s>=pk*1.05)||pk*1.1||1;}
+  function mirror(ctx,up,dn,w,h,max,color){
+    const mid=h/2;
+    ctx.strokeStyle='#8884';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(0,Math.round(mid)+.5);ctx.lineTo(w,Math.round(mid)+.5);ctx.stroke();
+    const side=(d,dir)=>{
+      const fy=v=>mid-dir*(v/max)*(mid-3);
+      poly(ctx,d,w,h,fy);ctx.lineTo(w,mid);ctx.lineTo(0,mid);ctx.closePath();
+      const g=ctx.createLinearGradient(0,dir>0?0:mid,0,dir>0?mid:h);
+      g.addColorStop(dir>0?0:1,color+'47');g.addColorStop(dir>0?1:0,color+'00');
+      ctx.fillStyle=g;ctx.fill();
+      poly(ctx,d,w,h,fy);ctx.strokeStyle=color;ctx.lineWidth=1.4;ctx.stroke();
+    };
+    side(up,1);side(dn,-1);
+    return {mid,fy:(v,dir)=>mid-dir*(v/max)*(mid-3)};
+  }
+
+  // ── 앱 인스턴스 ─────────────────────────────
+  function mount(el){
+    const a={el,css:k=>getComputedStyle(el).getPropertyValue(k).trim(),
+      cards:{},state:{},hover:null,pinned:false,hoverKey:null,soloBackup:null,minMode:false};
+    el.innerHTML=appHTML();
+    a.elapsedEl=el.querySelector('[data-elapsed]');
+    a.resetBtn=el.querySelector('[data-reset]');
+    a.cardsEl=el.querySelector('[data-cards]');
+    a.dotsEl=el.querySelector('[data-dots]');
+    a.resetBtn.addEventListener('click',()=>doReset());
+    ALL.forEach(c=>a.state[c.key]={collapsed:!!PRESETS[curPreset](c),auto:false});
+    syncCards(a,[]);
+    new ResizeObserver(()=>layout(a)).observe(a.cardsEl);
+    return a;
+  }
+
+  // 장치 목록이 바뀔 때마다 카드 DOM을 동기화한다 (추가/제거 모두)
+  function syncCards(a,newKeys){
+    const defs=cardsOf();
+    a.cardsEl.innerHTML=defs.map(cardHTML).join('');
+    a.dotsEl.innerHTML=defs.map(c=>`<span class="dot" style="background:var(${c.color})"></span>`).join('');
+    a.cards={};
+    defs.forEach(c=>{
+      const root=a.cardsEl.querySelector(`[data-card="${c.key}"]`);
+      a.cards[c.key]={def:c,root,box:root.querySelector('[data-box]'),
+        cv:root.querySelector('[data-canvas]'),spark:root.querySelector('[data-spark]'),ovl:root.querySelector('[data-ovl]'),
+        val:root.querySelector('[data-val]'),unit:root.querySelector('[data-unit]'),
+        foot:root.querySelector('[data-foot]'),scale:root.querySelector('[data-scale]')};
+      if(!a.state[c.key]) a.state[c.key]={collapsed:!!PRESETS[curPreset](c),auto:false};
+      if(newKeys.includes(c.key)){
+        root.classList.add('enter','newdev');
+        setTimeout(()=>root.classList.remove('newdev'),3000);
+      }
+      root.querySelector('[data-head]').addEventListener('click',()=>{
+        a.state[c.key].collapsed=!a.state[c.key].collapsed;a.state[c.key].auto=false;
+        a.minMode=false;a.el.style.height='';layout(a);});
+      root.querySelector('.cicon').addEventListener('dblclick',e=>{
+        e.stopPropagation();
+        const keys=cardsOf().map(x=>x.key);
+        if(a.soloBackup){keys.forEach(k=>{if(a.soloBackup[k]!=null)a.state[k].collapsed=a.soloBackup[k];});a.soloBackup=null;}
+        else{a.soloBackup={};keys.forEach(k=>{a.soloBackup[k]=a.state[k].collapsed;a.state[k].collapsed=(k!==c.key);});}
+        keys.forEach(k=>a.state[k].auto=false);layout(a);});
+      const box=a.cards[c.key].box;
+      box.addEventListener('mousemove',e=>{const r=box.getBoundingClientRect();
+        a.hover=clamp(Math.round((e.clientX-r.left)/r.width*(N-1)),0,N-1);a.hoverKey=c.key;});
+      box.addEventListener('mouseleave',()=>{if(!a.pinned){a.hover=null;a.hoverKey=null;}});
+      box.addEventListener('click',()=>{a.pinned=!a.pinned;});
+    });
+    layout(a);
+  }
+
+  function layout(a){
+    const defs=cardsOf();
+    if(!defs.length) return;
+    const total=a.cardsEl.clientHeight-PAD-(defs.length-1)*GAP;
+    defs.forEach(c=>{if(a.state[c.key].auto){a.state[c.key].collapsed=false;a.state[c.key].auto=false;}});
+    let guard=0;
+    for(;;){
+      if(++guard>14)break;
+      const ex=defs.filter(c=>!a.state[c.key].collapsed);
+      if(ex.length<=1)break;
+      const avail=total-(defs.length-ex.length)*COLLAPSED_H;
+      const wsum=ex.reduce((s,c)=>s+c.weight,0);
+      const minH=avail*Math.min(...ex.map(c=>c.weight))/wsum;
+      if(minH>=MIN_EXPANDED)break;
+      const victim=ex.slice().sort((x,y)=>x.prio-y.prio)[0];
+      a.state[victim.key].collapsed=true;a.state[victim.key].auto=true;
+    }
+    defs.forEach(c=>{
+      const st=a.state[c.key],el=a.cards[c.key].root;
+      el.classList.toggle('collapsed',st.collapsed);
+      el.classList.toggle('autocol',st.auto);
+      el.style.flexGrow=st.collapsed?'0':String(c.weight);
+      el.style.flexBasis=st.collapsed?COLLAPSED_H+'px':'0';
+    });
+  }
+
+  function applyPreset(a,name){
+    const f=PRESETS[name];if(!f)return;
+    cardsOf().forEach(c=>{a.state[c.key]={collapsed:!!f(c),auto:false};});
+    a.soloBackup=null;a.minMode=(name==='min');
+    const n=cardsOf().length;
+    a.el.style.height=a.minMode?(HDR+PAD+n*COLLAPSED_H+(n-1)*GAP)+'px':'';
+    requestAnimationFrame(()=>layout(a));
+  }
+
+  // ── 오버레이 ────────────────────────────────
+  const NETMETA={eth:{n:'Ethernet',d:'Intel I225-V · 2.5 Gbps · Full duplex'},
+                 wifi:{n:'Wi-Fi',d:'HOME-5G · 5GHz · 신호 78% · PHY 1.2 Gbps'}};
+  function ovlHTML(def,i,full){
+    const r=(k,v)=>`<span class="k">${k}</span><b>${v}</b>`, ago=`−${((N-1-i)*0.25).toFixed(1)}s`;
+    switch(def.kind){
+      case 'cpu':{
+        if(!full)return r('CPU',f1(S.cpu[i])+'%');
+        const bars=S.cores.map(c=>{const v=Math.round(c[i]);
+          return `<span style="display:inline-block;width:5px;height:12px;margin-right:2px;background:linear-gradient(to top,var(--cpu) ${v}%,var(--line) ${v}%)"></span>`;}).join('');
+        return `<div class="hd">${def.full} · ${ago}</div>${r('사용률',f1(S.cpu[i])+'%')}<br>${bars}<br><span class="k">논리 코어 8</span>`;
+      }
+      case 'mem':{
+        const p=S.mem[i]/S.memTotal*100;
+        if(!full)return r('MEM',f1(p)+'%');
+        return `<div class="hd">${def.full} · ${ago}</div>${r('사용',gib(S.mem[i])+' / 32 G')}<br>${r('비율',f1(p)+'%')}<br>${r('커밋',gib(S.commit[i])+' G')}`;
+      }
+      case 'net':{
+        const M=S.nets[def.ni],meta=NETMETA[def.netType];
+        if(!full)return `<span class="k">↓</span><b>${rate(M.rx[i])}${rateU(M.rx[i])}b</b> <span class="k">↑</span><b>${rate(M.tx[i])}${rateU(M.tx[i])}b</b>`;
+        let s=`<div class="hd">${def.full} · ${ago}</div>`+
+          r('↓ 수신',rate(M.rx[i])+' '+rateU(M.rx[i])+'bps')+'<br>'+
+          r('↑ 송신',rate(M.tx[i])+' '+rateU(M.tx[i])+'bps')+'<br>'+
+          `<span class="k">${meta.d}</span>`;
+        return s;
+      }
+      case 'disk':{
+        const D=S.disks[def.di];
+        if(!full)return `<span class="k">R</span><b>${mbs(D.r[i])}</b> <span class="k">W</span><b>${mbs(D.w[i])}</b>`;
+        return `<div class="hd">${def.full} · ${ago}</div>`+
+          r('읽기',mbs(D.r[i])+' '+mbsU(D.r[i])+'B/s')+'<br>'+
+          r('쓰기',mbs(D.w[i])+' '+mbsU(D.w[i])+'B/s')+'<br>'+
+          r('활성',f1(D.a[i])+'%')+' '+r('큐',f1(D.q[i]))+'<br>'+
+          `<span class="k">${def.bus} · ${def.label}</span>`;
+      }
+      default:{
+        const g=S.gpus[def.gi],dsc=g.discrete;
+        if(!full)return `<span class="k">G${def.gi}</span><b>${f1(g.u[i])}%</b> <b>${gib(g.gd[i]+g.gs[i])}G</b>`;
+        return `<div class="hd">${def.full} · ${ago}</div>`+
+          r('사용률',f1(g.u[i])+'%')+'<br>'+
+          `<span class="k">3D</span><b>${Math.round(g.d3[i])}</b> <span class="k">CU</span><b>${Math.round(g.c[i])}</b> <span class="k">CP</span><b>${Math.round(g.cp[i])}</b><br>`+
+          r('전용',gib(g.gd[i])+' / '+(g.ded/GB).toFixed(dsc?0:1)+' G')+'<br>'+
+          r('공유',gib(g.gs[i])+' G')+'<br>'+
+          `<span style="color:var(--gpu)">${Math.round(g.t[i])}°C · ${Math.round(g.p[i])}W · ${Math.round(g.clk[i])}MHz</span>`;
+      }
+    }
+  }
+  function placeOvl(a,c,idx,full){
+    const o=c.ovl;
+    if(idx==null||a.state[c.def.key].collapsed){o.classList.remove('show');return;}
+    o.innerHTML=ovlHTML(c.def,idx,full);o.classList.add('show');
+    const bw=c.box.clientWidth,x=bw*idx/(N-1),ow=o.offsetWidth;
+    const left=x+8+ow>bw ? x-8-ow : x+8;
+    o.style.left=Math.round(Math.min(Math.max(left,2),Math.max(2,bw-ow-2)))+'px';
+  }
+
+  // ── 렌더 ────────────────────────────────────
+  function render(a){
+    const C={line:a.css('--line'),dim:a.css('--dim'),fg:a.css('--fg'),surface:a.css('--surface'),
+      cpu:a.css('--cpu'),mem:a.css('--mem'),net:a.css('--net'),disk:a.css('--disk'),gpu:a.css('--gpu'),warn:a.css('--warn')};
+    a.elapsedEl.textContent=elapsed();
+    const st=S.stats,idx=a.hover,iCur=idx==null?N-1:idx;
+
+    cardsOf().forEach((def,ci)=>{
+      const c=a.cards[def.key]; if(!c) return;
+      const collapsed=a.state[def.key].collapsed;
+      const setVal=(v,u)=>{c.val.firstChild.nodeValue=v;c.unit.textContent=u;c.val.classList.toggle('scrub',idx!=null);};
+      let alert=false;
+      const accent=C[def.kind==='gpu'?'gpu':def.kind];
+
+      if(!collapsed){
+        const {ctx,w,h}=fit(c.cv);grid(ctx,w,h,C.line);
+        let pts=[];
+        if(def.kind==='cpu'){
+          const fy=v=>h-(v/100)*h*.92-2;
+          areaFill(ctx,S.cpu,w,h,fy,C.cpu,'47');
+          if(st.cpu.n){const y=Math.round(fy(st.cpu.sum/st.cpu.n))+.5;
+            ctx.save();ctx.setLineDash([4,4]);ctx.strokeStyle=C.cpu+'80';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(w,y);ctx.stroke();ctx.restore();}
+          pts=[{y:fy(S.cpu[iCur]),c:C.cpu}];
+          setVal(Math.round(S.cpu[iCur]),'%');
+          c.foot.innerHTML=st.cpu.n?`<b>~</b>${f1(st.cpu.sum/st.cpu.n)}&nbsp;&nbsp;<b>▲</b>${f1(st.cpu.max)}&nbsp;&nbsp;<b>▼</b>${f1(st.cpu.min)}`:'';
+          c.scale.textContent='100%';
+        }
+        else if(def.kind==='mem'){
+          const fy=v=>h-(v/S.memTotal)*h*.92-2;
+          areaFill(ctx,S.mem,w,h,fy,C.mem,'47');
+          poly(ctx,S.commit,w,h,fy);ctx.strokeStyle=C.mem+'66';ctx.lineWidth=1;ctx.stroke();
+          const p=S.mem[iCur]/S.memTotal*100;alert=p>95;
+          pts=[{y:fy(S.mem[iCur]),c:C.mem}];
+          setVal(Math.round(p),'%');
+          c.foot.innerHTML=st.mem.n?`<b>~</b>${f1(st.mem.sum/st.mem.n)}&nbsp;&nbsp;<b>▲</b>${f1(st.mem.max)}&nbsp;&nbsp;<b>▼</b>${f1(st.mem.min)}`:'';
+          c.scale.textContent='32G';
+        }
+        else if(def.kind==='net'){
+          const M=S.nets[def.ni];
+          const max=pickMax(M.rx,M.tx,STEPS_BITS),m=mirror(ctx,M.rx,M.tx,w,h,max,C.net);
+          pts=[{y:m.fy(M.rx[iCur],1),c:C.net},{y:m.fy(M.tx[iCur],-1),c:C.net}];
+          setVal(rate(M.rx[iCur]),rateU(M.rx[iCur])+'b');
+          const kr=st['n'+def.ni+'r'],kt=st['n'+def.ni+'t'];
+          const sc=scaleOf(Math.max(kr.max,kt.max)||1,'bits');
+          c.foot.innerHTML=kr.n?`<b>~</b>${inScale(kr.sum/kr.n,sc,'bits')}&nbsp;&nbsp;<b>▲</b>${inScale(kr.max,sc,'bits')}&nbsp;&nbsp;<b>↑</b>${inScale(kt.max,sc,'bits')}&nbsp;<span style="opacity:.6">${sc.u}b</span>`:'';
+          c.scale.textContent=rate(max)+rateU(max)+'b';
+        }
+        else if(def.kind==='disk'){
+          const D=S.disks[def.di],max=pickMax(D.r,D.w,STEPS_BYTES),m=mirror(ctx,D.r,D.w,w,h,max,C.disk);
+          alert=D.a[N-1]>95;
+          pts=[{y:m.fy(D.r[iCur],1),c:C.disk},{y:m.fy(D.w[iCur],-1),c:C.disk}];
+          const tot=D.r[iCur]+D.w[iCur];
+          setVal(mbs(tot),mbsU(tot)+'B');
+          const kr=st['d'+def.di+'r'],kw=st['d'+def.di+'w'];
+          const sc=scaleOf(Math.max(kr.max,kw.max)||1,'bytes');
+          c.foot.innerHTML=kr.n?`<b>~</b>${inScale((kr.sum+kw.sum)/kr.n,sc)}&nbsp;&nbsp;<b>▲</b>${inScale(kr.max,sc)}&nbsp;&nbsp;<b>↑</b>${inScale(kw.max,sc)}&nbsp;<span style="opacity:.6">${sc.u}B</span>`:'';
+          c.scale.textContent=mbs(max)+mbsU(max)+'B';
+        }
+        else{
+          const g=S.gpus[def.gi],dsc=g.discrete;
+          let pk=0;for(let i=0;i<N;i++)pk=Math.max(pk,g.gd[i]+g.gs[i]);
+          const axisMax=dsc?Math.max(g.ded*1.15,pk*1.10):Math.max(g.shared*0.55,pk*1.15);
+          const yb=v=>h-(v/axisMax)*h*.96-2, yp=v=>h-(v/100)*h*.92-2;
+          const spilling=dsc&&g.gs[N-1]>0.15*GB;alert=spilling;
+          poly(ctx,g.gd,w,h,yb);ctx.lineTo(w,h);ctx.lineTo(0,h);ctx.closePath();
+          ctx.fillStyle=C.gpu+'33';ctx.fill();
+          poly(ctx,g.gd,w,h,yb);ctx.strokeStyle=C.gpu+'77';ctx.lineWidth=1;ctx.stroke();
+          ctx.save();ctx.beginPath();
+          for(let i=0;i<N;i++){const x=w*i/(N-1);i?ctx.lineTo(x,yb(g.gd[i]+g.gs[i])):ctx.moveTo(x,yb(g.gd[i]+g.gs[i]));}
+          for(let i=N-1;i>=0;i--){const x=w*i/(N-1);ctx.lineTo(x,yb(g.gd[i]));}
+          ctx.closePath();ctx.clip();
+          ctx.fillStyle=hatch(ctx,spilling?C.warn+'AA':C.gpu+'99');ctx.fillRect(0,0,w,h);ctx.restore();
+          ctx.beginPath();
+          for(let i=0;i<N;i++){const x=w*i/(N-1);i?ctx.lineTo(x,yb(g.gd[i]+g.gs[i])):ctx.moveTo(x,yb(g.gd[i]+g.gs[i]));}
+          ctx.strokeStyle=(spilling?C.warn:C.gpu)+'88';ctx.lineWidth=1;ctx.stroke();
+          if(dsc){
+            const capY=Math.round(yb(g.ded))+.5;
+            ctx.save();ctx.setLineDash([6,4]);ctx.strokeStyle=spilling?C.warn:C.gpu+'99';ctx.lineWidth=1.3;
+            ctx.beginPath();ctx.moveTo(0,capY);ctx.lineTo(w,capY);ctx.stroke();ctx.restore();
+          }
+          ctx.save();ctx.setLineDash([3,3]);poly(ctx,g.c,w,h,yp);
+          ctx.strokeStyle=C.gpu+'70';ctx.lineWidth=1.2;ctx.stroke();ctx.restore();
+          poly(ctx,g.u,w,h,yp);ctx.strokeStyle=C.surface;ctx.lineWidth=4;ctx.globalAlpha=.75;ctx.stroke();ctx.globalAlpha=1;
+          poly(ctx,g.u,w,h,yp);ctx.strokeStyle=C.gpu;ctx.lineWidth=2;ctx.stroke();
+          pts=[{y:yp(g.u[iCur]),c:C.gpu},{y:yb(g.gd[iCur]+g.gs[iCur]),c:(spilling?C.warn:C.gpu)}];
+          setVal(Math.round(g.u[iCur]),'%');
+          const su=st['g'+def.gi+'u'];
+          c.foot.innerHTML=su.n?`<b>~</b>${f1(su.sum/su.n)}&nbsp;&nbsp;<b>▲</b>${f1(su.max)}&nbsp;&nbsp;<b>▼</b>${f1(su.min)}&nbsp;&nbsp;<b>▪</b>${gib(g.gd[iCur])}${g.gs[iCur]>0.05*GB?'+'+gib(g.gs[iCur]):''}`:'';
+          c.scale.textContent=dsc?(g.ded/GB).toFixed(0)+'G':(g.shared/GB).toFixed(0)+'G↔';
+        }
+        markers(ctx,w,h,C.fg+'73');
+        scrub(ctx,w,h,idx,pts,C);
+        placeOvl(a,c,idx,a.hoverKey===def.key);
+      } else {
+        const M=def.kind==='net'?S.nets[def.ni]:null, D=def.kind==='disk'?S.disks[def.di]:null;
+        const data=def.kind==='cpu'?S.cpu:def.kind==='mem'?S.mem:def.kind==='net'?M.rx:def.kind==='disk'?D.r:S.gpus[def.gi].u;
+        // 18px 스트립은 "최근 60초의 형태"만 전달한다 — 절대 축이면 값이 낮을 때 바닥에 붙는다
+        let pk=0;for(let i=0;i<N;i++) if(data[i]>pk) pk=data[i];
+        const mx=pk>0?pk*1.15:1;
+        const {ctx,w,h}=fit(c.spark);
+        poly(ctx,data,w,h,v=>h-(v/mx)*(h-4)-2);
+        ctx.strokeStyle=accent+'D0';ctx.lineWidth=1.2;ctx.stroke();
+        if(idx!=null){const x=Math.round(w*idx/(N-1))+.5;
+          ctx.strokeStyle=C.fg+'66';ctx.setLineDash([2,2]);ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,h);ctx.stroke();ctx.setLineDash([]);}
+        if(def.kind==='cpu')setVal(Math.round(S.cpu[iCur]),'%');
+        else if(def.kind==='mem')setVal(Math.round(S.mem[iCur]/S.memTotal*100),'%');
+        else if(def.kind==='net')setVal(rate(M.rx[iCur]),rateU(M.rx[iCur])+'b');
+        else if(def.kind==='disk'){const t=D.r[iCur]+D.w[iCur];setVal(mbs(t),mbsU(t)+'B');alert=D.a[N-1]>95;}
+        else{const g=S.gpus[def.gi];setVal(Math.round(g.u[iCur]),'%');alert=g.discrete&&g.gs[N-1]>0.15*GB;}
+        c.ovl.classList.remove('show');
+      }
+      c.root.classList.toggle('alert',alert);
+      const dot=a.dotsEl.children[ci];
+      if(dot){dot.classList.toggle('off',collapsed);dot.style.boxShadow=alert?`0 0 0 2px ${C.warn}66`:'none';}
+    });
+  }
+
+  // ── 부팅 ────────────────────────────────────
+  const apps=[mount(document.getElementById('appDark')),mount(document.getElementById('appLight'))];
+  function doReset(){resetStats();apps.forEach(a=>{a.resetBtn.classList.remove('spin');void a.resetBtn.offsetWidth;a.resetBtn.classList.add('spin');});}
+
+  let labelTimer=null;
+  function showLabels(ms){
+    clearTimeout(labelTimer);
+    apps.forEach(a=>a.el.classList.add('labels'));
+    if(ms) labelTimer=setTimeout(()=>apps.forEach(a=>a.el.classList.remove('labels')),ms);
+  }
+  const hideLabels=()=>{clearTimeout(labelTimer);apps.forEach(a=>a.el.classList.remove('labels'));};
+  showLabels(3000);   // 최초 실행 시뮬레이션
+
+  // 장치 추가 / 제거
+  function setPresent(keys,added){
+    present=ORDER.filter(k=>keys.includes(k));
+    apps.forEach(a=>{a.minMode=false;a.el.style.height='';syncCards(a,added);});
+  }
+  const wifiBtn=document.getElementById('btnWifi');
+  wifiBtn.addEventListener('click',()=>{
+    const on=present.includes('net1');
+    setPresent(on?present.filter(k=>k!=='net1'):present.concat('net1'), on?[]:['net1']);
+    wifiBtn.textContent=on?'Wi-Fi 켜기':'Wi-Fi 끄기';
+  });
+  const egpuBtn=document.getElementById('btnEgpu');
+  egpuBtn.addEventListener('click',()=>{
+    const on=present.includes('gpu2');
+    setPresent(on?present.filter(k=>k!=='gpu2'):present.concat('gpu2'), on?[]:['gpu2']);
+    egpuBtn.textContent=on?'eGPU 연결 (AMD)':'eGPU 해제';
+  });
+
+  document.getElementById('btnLabels').addEventListener('click',()=>showLabels(3000));
+  document.getElementById('btnReset').addEventListener('click',doReset);
+  document.getElementById('btnSpill').addEventListener('click',()=>{S.spill=45;});
+  const pb=document.getElementById('btnPause');
+  pb.addEventListener('click',()=>{S.paused=!S.paused;pb.textContent=S.paused?'재생':'일시정지';});
+  document.querySelectorAll('[data-preset]').forEach(b=>b.addEventListener('click',()=>{
+    document.querySelectorAll('[data-preset]').forEach(x=>x.classList.remove('on'));
+    b.classList.add('on');curPreset=b.dataset.preset;
+    apps.forEach(a=>applyPreset(a,curPreset));
+  }));
+  window.addEventListener('keydown',e=>{
+    if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='r'){e.preventDefault();doReset();return;}
+    if(e.key==='l'||e.key==='L'){showLabels(0);return;}
+    const d=e.key==='ArrowLeft'?-1:e.key==='ArrowRight'?1:0;
+    if(d)apps.forEach(a=>{if(a.pinned&&a.hover!=null){a.hover=clamp(a.hover+d*(e.shiftKey?10:1),0,N-1);e.preventDefault();}});
+    if(e.key==='Escape')apps.forEach(a=>{a.pinned=false;a.hover=null;a.hoverKey=null;});
+  });
+  window.addEventListener('keyup',e=>{if(e.key==='l'||e.key==='L')hideLabels();});
+  window.addEventListener('resize',()=>apps.forEach(a=>layout(a)));
+  setInterval(()=>{if(!S.paused)step();},TICK);
+  (function loop(){apps.forEach(render);requestAnimationFrame(loop);})();
+})();
+</script>
+</body>
+</html>

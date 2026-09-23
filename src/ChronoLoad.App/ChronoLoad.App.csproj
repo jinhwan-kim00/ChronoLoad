@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- 작업표시줄·바로가기·탐색기가 쓰는 아이콘. tools/make-icon.py 가 만든다.
+         창에는 따로 지정하지 않는다 — WPF 는 Window.Icon 이 없으면 실행 파일 아이콘을 쓴다.
+         게다가 여기 지정한 파일은 SDK 가 리소스에서 빼므로 XAML 에서 참조하면 시작 시 죽는다. -->
+    <ApplicationIcon>app.ico</ApplicationIcon>
+    <!-- LibraryImport 소스 생성기가 unsafe 코드를 낸다(VisibilityWatch 의 P/Invoke). -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- 첫 프레임까지 800ms(§12). JIT 를 기다리지 않도록 미리 컴파일해 둔다.
+         RID 는 게시할 때만 준다 — csproj 에 박으면 일반 빌드의 출력 경로까지 바뀌어
+         bin/Debug 아래 옛 exe 가 남고, 그걸 띄우면서 고친 것이 반영되지 않았다고 착각하게 된다.
+         게시: dotnet publish -c Release -r win-x64 -->
+    <PublishReadyToRun>true</PublishReadyToRun>
+    <SelfContained>false</SelfContained>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ChronoLoad.Core\ChronoLoad.Core.csproj" />
+    <ProjectReference Include="..\ChronoLoad.Sensors\ChronoLoad.Sensors.csproj" />
+    <ProjectReference Include="..\ChronoLoad.Mcp\ChronoLoad.Mcp.csproj" />
+  </ItemGroup>
+
+</Project>

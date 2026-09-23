@@ -1,0 +1,16 @@
+<Project>
+
+  <PropertyGroup>
+    <LangVersion>latest</LangVersion>
+    <!-- 정보 창이 보여주는 값. 기능 단위로 올린다(M6 MCP → 0.9, M7 안정화 → 1.0). -->
+    <Version>0.9.0</Version>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <!-- WPF 텍스트 레이아웃이 실제 컬처를 요구한다. InvariantGlobalization 은 켤 수 없다. -->
+    <InvariantGlobalization>false</InvariantGlobalization>
+    <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
+    <!-- 센서 루프에서 할당을 피하려면 Span/ref struct 사용이 잦다 -->
+    <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+</Project>
