@@ -104,6 +104,22 @@ public sealed class ChartSurface : FrameworkElement
         return count <= 1 ? 0 : ActualWidth * Math.Clamp(index, 0, count - 1) / (count - 1);
     }
 
+    /// <summary>
+    /// 이번 프레임에 실제로 그린 점의 개수. 버퍼가 아직 표시 창보다 짧으면
+    /// <see cref="WindowPoints"/> 보다 작다.
+    /// </summary>
+    /// <remarks>
+    /// 스크럽 인덱스는 <b>이 값</b>을 기준으로 잡아야 한다. <c>WindowPoints</c> 로 잡으면
+    /// 버퍼가 차기 전에는 커서 위치와 실제로 가리키는 점이 어긋난다 — 기동 직후 1분 동안
+    /// 클릭한 자리와 읽히는 값이 다르다.
+    /// </remarks>
+    /// <remarks>
+    /// <b>마지막 렌더가 아니라 데이터에서 센다.</b> 렌더는 한 프레임 뒤처지는데, 버퍼가 차는
+    /// 동안에는 점 개수가 매 틱 늘어난다. 뒤처진 수를 쓰면 "맨 오른쪽"이 한 칸씩 어긋난다.
+    /// </remarks>
+    public int PointCount =>
+        Series is null ? 0 : Math.Min(Math.Max(2, WindowPoints), Math.Max(2, Series.Count));
+
     public bool ShowGrid { get; set; } = true;
 
     /// <summary>조합 차트의 전용 메모리(우축 누적 하단).</summary>

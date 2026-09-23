@@ -317,21 +317,22 @@ public sealed class CardView : Border
         Grid.SetRowSpan(_overlay, 2);
         _grid.Children.Add(_overlay);
 
-        _chart.MouseMove += (_, e) =>
+        // 차트가 아니라 카드에 붙인다. 차트 바깥 여백에서도 스크럽이 잡히게 하기 위해서다 —
+        // 아래 TryIndexAt 참조. 머리글 클릭(접기)은 자식에서 이미 Handled 로 끝나므로
+        // 여기까지 오지 않는다.
+        // 차트 띠를 벗어나면(머리글·푸터) 호버를 놓는다. 그러지 않으면 카드를 접으려고
+        // 머리글에 커서를 올리는 동안 스크럽선이 옛 자리에 남아 전 카드가 과거를 가리킨다.
+        MouseMove += (_, e) =>
         {
-            double width = _chart.ActualWidth;
-            if (width < 4) return;
-            int index = (int)Math.Round(e.GetPosition(_chart).X / width * (_chart.WindowPoints - 1));
-            ScrubHover?.Invoke(this, Math.Clamp(index, 0, _chart.WindowPoints - 1));
+            if (TryIndexAt(e, out int index)) ScrubHover?.Invoke(this, index);
+            else ScrubLeave?.Invoke(this);
         };
-        _chart.MouseLeave += (_, _) => ScrubLeave?.Invoke(this);
-        _chart.MouseLeftButtonUp += (_, e) =>
+        MouseLeave += (_, _) => ScrubLeave?.Invoke(this);
+        MouseLeftButtonUp += (_, e) =>
         {
-            double width = _chart.ActualWidth;
-            if (width < 4) return;
-            int index = (int)Math.Round(e.GetPosition(_chart).X / width * (_chart.WindowPoints - 1));
+            if (!TryIndexAt(e, out int index)) return;
             e.Handled = true;
-            ScrubToggle?.Invoke(this, Math.Clamp(index, 0, _chart.WindowPoints - 1));
+            ScrubToggle?.Invoke(this, index);
         };
 
         // ── 푸터 ─────────────────────────────────────────────
@@ -363,7 +364,41 @@ public sealed class CardView : Border
     public event Action<CardView>? ScrubLeave;
     public event Action<CardView, int>? ScrubToggle;
 
-    public int WindowPoints => _chart.WindowPoints;
+    /// <summary>스크럽 인덱스의 범위. 차트가 실제로 그린 점 수다.</summary>
+    public int WindowPoints => Math.Max(2, _chart.PointCount);
+
+    /// <summary>
+    /// 차트 좌우 바깥으로 두는 여유. 이만큼 벗어나도 양 끝 점을 집은 것으로 친다.
+    /// </summary>
+    /// <remarks>
+    /// <b>맨 오른쪽 점은 커서로 집을 수 없었다.</b> 240개를 그리는 차트에서 한 점이 차지하는
+    /// 폭은 1/239 — 2px 남짓이고, 그 점은 차트의 맨 끝이라 반쪽만 남는다. 하필 그 점이
+    /// "지금"이라 가장 자주 쓰인다(§8.7 의 현재값 추적). 카드 안쪽 여백까지 같은 점으로 쳐서
+    /// 집을 수 있게 한다.
+    /// </remarks>
+    private const double ScrubSlack = 12;
+
+    /// <summary>커서 위치 → 표시 창 인덱스. 스크럽 대상이 아닌 자리면 false.</summary>
+    private bool TryIndexAt(System.Windows.Input.MouseEventArgs e, out int index)
+    {
+        index = 0;
+        if (_collapsed) return false;
+
+        var point = e.GetPosition(_chart);
+        double width = _chart.ActualWidth, height = _chart.ActualHeight;
+        if (width < 4 || height < 4) return false;
+
+        // 세로로는 여유를 주지 않는다. 머리글·푸터까지 스크럽 영역으로 치면 카드를 접으려고
+        // 머리글에 커서를 올리는 동안에도 값이 과거로 바뀐다.
+        if (point.Y < 0 || point.Y > height) return false;
+        if (point.X < -ScrubSlack || point.X > width + ScrubSlack) return false;
+
+        // 인덱스는 차트가 실제로 그린 점 수를 기준으로 잡는다. WindowPoints 로 잡으면
+        // 버퍼가 차기 전(기동 직후 1분)에는 집은 자리와 읽히는 값이 어긋난다.
+        int last = WindowPoints - 1;
+        index = Math.Clamp((int)Math.Round(point.X / width * last), 0, last);
+        return true;
+    }
 
     /// <summary>경고 상태. 접힌 카드에서도 테두리로 드러난다.</summary>
     public bool IsAlert { get; set; }
@@ -614,8 +649,15 @@ public sealed class CardView : Border
     /// <summary>커서 반대편으로 자동 플립해 데이터를 가리지 않는다.</summary>
     private void PositionOverlay(int index)
     {
-        _overlay.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
-        double panelWidth = _overlay.DesiredSize.Width;
+        // 패널 폭은 <b>내용</b>에서 잰다. _overlay.DesiredSize 에는 우리가 방금 설정한
+        // Margin.Left 가 더해져 있어서, 그것으로 재면 지난 틱에 오른쪽으로 밀어둔 여백이
+        // 이번 틱의 "패널 폭"이 된다 — 플립 조건이 매 틱 뒤집혀 칩이 좌우 끝으로 튄다.
+        // 오버레이를 매 틱 다시 채우기 시작하면서 드러났다.
+        _overlayRows.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+        double panelWidth = _overlayRows.DesiredSize.Width
+                            + _overlay.Padding.Left + _overlay.Padding.Right
+                            + _overlay.BorderThickness.Left + _overlay.BorderThickness.Right;
+
         double chartWidth = _chart.ActualWidth;
 
         // 직전 렌더의 ScrubX 를 쓰면 한 프레임 늦는다. 인덱스에서 직접 계산한다.

@@ -55,8 +55,30 @@ public sealed class AppSettings
     /// <summary>장치 키 → 접힘 여부. 지금 없는 장치의 항목도 남겨둔다(다시 꽂으면 되살아난다).</summary>
     public Dictionary<string, bool> Collapsed { get; } = new(StringComparer.OrdinalIgnoreCase);
 
-    public static string Directory => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ChronoLoad");
+    /// <summary>
+    /// 설정 폴더. <c>LOCALAPPDATA</c> 환경변수가 있으면 그것을 쓴다.
+    /// </summary>
+    /// <remarks>
+    /// <b><see cref="Environment.GetFolderPath"/> 는 환경변수를 보지 않는다.</b> Windows 셸에
+    /// 직접 묻기 때문에, 환경변수를 바꿔 격리했다고 믿은 테스트가 <b>실제 사용자 설정을</b>
+    /// 읽고 쓴다. 실제로 그랬다 — 테스트 한 번에 사용자의 창 위치가 지워지고, 렌더 테스트의
+    /// 합성 장치 키(<c>gpu:demo</c> 등)가 실제 파일에 남았다.
+    /// <para>
+    /// 환경변수를 먼저 보는 쪽이 맞다. 격리가 실제로 되고, 값이 없거나 비어 있으면 셸에 묻는
+    /// 원래 동작 그대로다.
+    /// </para>
+    /// </remarks>
+    public static string Directory
+    {
+        get
+        {
+            string? local = Environment.GetEnvironmentVariable("LOCALAPPDATA");
+            if (string.IsNullOrWhiteSpace(local))
+                local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+
+            return Path.Combine(local, "ChronoLoad");
+        }
+    }
 
     public static string FilePath => Path.Combine(Directory, "settings.json");
 

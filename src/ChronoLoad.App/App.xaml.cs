@@ -31,7 +31,7 @@ public partial class App : Application
                          && int.TryParse(e.Args[scrubIndex + 1], out int v) ? v : null;
             RunRenderTest(e.Args[renderTestIndex + 1], e.Args.Contains("--light"),
                 e.Args.Contains("--collapsed"), scrub, e.Args.Contains("--hotplug"),
-                e.Args.Contains("--about"));
+                e.Args.Contains("--about"), e.Args.Contains("--scrub-drift"));
             return;
         }
 
@@ -106,8 +106,14 @@ public partial class App : Application
     /// 설계서 §15의 골든 이미지 비교가 쓸 기반이자, 지금은 렌더러를 눈으로 확인하는 수단이다.
     /// </summary>
     private void RunRenderTest(string outputPath, bool light, bool collapsed, int? scrubIndex = null,
-                               bool hotPlug = false, bool about = false)
+                               bool hotPlug = false, bool about = false, bool scrubDrift = false)
     {
+        // 렌더 테스트는 합성 장치를 쓴다. 실제 설정 폴더를 그대로 쓰면 사용자의 창 위치를
+        // 읽어 와 그림이 달라지고, 끝낼 때 gpu:demo 같은 가짜 장치 키를 사용자 파일에 남긴다.
+        // 실제로 남겼다. 임시 폴더로 돌려 읽기도 쓰기도 격리한다.
+        Environment.SetEnvironmentVariable("LOCALAPPDATA",
+            Path.Combine(Path.GetTempPath(), "chronoload-render-" + Environment.ProcessId));
+
         ThemeService.Instance.Mode = light ? AppTheme.Light : AppTheme.Dark;
 
         var registry = BuildSyntheticRegistry();
@@ -119,7 +125,7 @@ public partial class App : Application
 
         // 핫플러그를 태울 때는 엔진이 있어야 한다 — 장치 변경 통지가 엔진에서 나오기 때문에,
         // 엔진 없이 검사하면 실제와 다른 경로를 보게 된다. 루프는 돌리지 않고 틱만 손으로 민다.
-        var engine = hotPlug ? new SampleEngine(registry) : null;
+        var engine = hotPlug || scrubDrift ? new SampleEngine(registry) : null;
 
         var window = new MainWindow(registry, engine, collapsed, scrubIndex)
         {
@@ -131,8 +137,43 @@ public partial class App : Application
         window.Show();
 
         if (hotPlug) RunHotPlugScript(window, registry, engine!, outputPath);
+        else if (scrubDrift) RunScrubDriftScript(window, registry, engine!, outputPath);
         else if (about) CaptureAfter(500, window, outputPath, () => CaptureAbout(window, outputPath));
         else CaptureAfter(600, window, outputPath, Shutdown);
+    }
+
+    /// <summary>
+    /// 고정한 스크럽선이 시간이 흐를 때 그래프와 같이 왼쪽으로 흐르는지 본다 (§8.7).
+    /// </summary>
+    /// <remarks>
+    /// 선이 가리키는 <b>순간</b>이 유지되는지는 한 장면으로 확인할 수 없다 — 두 시점을 찍어
+    /// 비교해야 한다. WPF 는 합성 마우스 메시지를 입력으로 받지 않으므로 사람 손 없이
+    /// 검증하려면 이 경로가 필요하다.
+    /// </remarks>
+    private void RunScrubDriftScript(MainWindow window, MetricRegistry registry, SampleEngine engine,
+                                     string outputPath)
+    {
+        string stem = Path.Combine(
+            Path.GetDirectoryName(Path.GetFullPath(outputPath))!,
+            Path.GetFileNameWithoutExtension(outputPath));
+
+        // 연속한 틱을 따로 찍는다. 흐르는 거리뿐 아니라 <b>틱 사이에 튀지 않는지</b>도 봐야 한다 —
+        // 오버레이 위치를 패널 폭으로 정하던 동안, 값이 한 글자 달라질 때마다 요약 칩이
+        // 반대편으로 뛰었다. 한 장만 찍으면 그 진동은 절대 안 보인다.
+        void Step(int stage, int ticks, Action next)
+        {
+            for (int i = 0; i < ticks; i++) engine.TickOnce(0.25);
+            CaptureAfter(700, window, $"{stem}-{stage}.png", next);
+        }
+
+        // 엔진 틱만 돌린다. 틱 하나가 샘플 하나를 커밋하므로 창이 한 칸씩 미끄러지고 Committed 도
+        // 그만큼 발생한다. registry.PushFrame 을 같이 부르면 샘플은 둘씩 느는데 Committed 는
+        // 하나라, 멀쩡한 코드가 어긋난 것처럼 보인다.
+        CaptureAfter(600, window, $"{stem}-1-pinned.png",
+            () => Step(2, 1,
+            () => Step(3, 1,
+            () => Step(4, 1,
+            () => Step(5, 40, Shutdown)))));
     }
 
     /// <summary>

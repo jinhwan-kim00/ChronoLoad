@@ -143,6 +143,30 @@ public sealed class MetricSeries
     /// <summary>테스트·진단용. 인덱스 0이 가장 오래된 유효 샘플.</summary>
     public bool IsMeasured(int index) => GetMeasuredBit(SlotOf(index));
 
+    /// <summary>
+    /// 차트가 그리는 표시 창의 인덱스를 버퍼 절대 인덱스로 옮긴다. 창 밖이면 −1.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 차트는 <b>가장 최근</b> <paramref name="windowPoints"/> 개를 왼쪽부터 그린다. 버퍼는 그보다
+    /// 훨씬 길 수 있으므로(기본 3600 대 240) 표시 창 인덱스를 그대로 버퍼 인덱스로 쓰면
+    /// <b>화면에 없는 옛날 샘플</b>을 읽는다. 그림과 숫자가 다른 곳을 가리키는데 둘 다 그럴듯해
+    /// 보여서 알아차리기 어렵다 — 실제로 그렇게 틀려 있었다.
+    /// </para>
+    /// <para>
+    /// 버퍼가 아직 창보다 짧으면 차트도 있는 만큼만 그리므로 인덱스가 그대로 대응한다.
+    /// </para>
+    /// </remarks>
+    public int AbsoluteIndexOf(int windowIndex, int windowPoints)
+    {
+        int count = Count;
+        if (count == 0 || windowPoints <= 0) return -1;
+
+        int visible = Math.Min(windowPoints, count);
+        int absolute = count - visible + windowIndex;
+        return absolute < 0 || absolute >= count ? -1 : absolute;
+    }
+
     private int SlotOf(int index)
     {
         int count = Count;

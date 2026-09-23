@@ -125,7 +125,7 @@ public partial class MainWindow : Window
         if (_initialScrub is { } index && _cards.Count > 0)
         {
             var focus = _cards.FirstOrDefault(c => !c.Model.Collapsed) ?? _cards[0];
-            _scrub.TogglePin(focus.Model.Key, index);
+            _scrub.TogglePin(focus.Model.Key, index, focus.WindowPoints);
         }
     }
 
@@ -158,9 +158,10 @@ public partial class MainWindow : Window
 
         var card = new CardView(model) { Margin = new Thickness(0, 0, 0, 8) };
         card.ToggleRequested += OnCardToggled;
-        card.ScrubHover += (c, i) => _scrub.Hover(c.Model.Key, i);
+        // 맨 오른쪽인지는 그 카드의 점 수로 판정한다 — 카드마다 물어야 정확하다.
+        card.ScrubHover += (c, i) => _scrub.Hover(c.Model.Key, i, c.WindowPoints);
         card.ScrubLeave += _ => _scrub.Leave();
-        card.ScrubToggle += (c, i) => _scrub.TogglePin(c.Model.Key, i);
+        card.ScrubToggle += (c, i) => _scrub.TogglePin(c.Model.Key, i, c.WindowPoints);
         return card;
     }
 
@@ -465,7 +466,13 @@ public partial class MainWindow : Window
         // 복원했을 때 히스토리에는 구멍이 없다 (§6.3).
         if (_visibility is { ShouldRender: false }) return;
 
-        Dispatcher.InvokeAsync(RefreshCards, DispatcherPriority.Render);
+        Dispatcher.InvokeAsync(() =>
+        {
+            // 새 샘플 하나가 들어왔으니 그래프가 한 칸 왼쪽으로 흐른다. 고정된 선도 같이 흘려
+            // 가리키던 순간을 놓치지 않게 한다 — 맨 오른쪽에 세운 선만 제자리에서 현재를 따라간다.
+            _scrub.Advance(_cards.Count > 0 ? _cards[0].WindowPoints : 240);
+            RefreshCards();
+        }, DispatcherPriority.Render);
     }
 
     /// <summary>
@@ -483,6 +490,16 @@ public partial class MainWindow : Window
 
     private void RefreshCards()
     {
+        // 스크럽 중에는 오버레이도 매 틱 다시 채운다. 선이 흐르면 패널이 따라가야 하고,
+        // 맨 오른쪽에 세운 선은 값 자체가 계속 바뀐다. 다시 채우지 않으면 차트의 점은
+        // 새 값으로 움직이는데 옆의 숫자만 옛 값으로 남아, 같은 화면이 두 말을 한다.
+        if (_scrub.Index is { } scrub)
+        {
+            var palette = _theme.Palette;
+            foreach (var card in _cards)
+                card.ApplyScrub(scrub, _scrub.FocusCardKey == card.Model.Key, palette);
+        }
+
         foreach (var card in _cards) card.Refresh(_registry);
 
         if (_cards.Count > 0)

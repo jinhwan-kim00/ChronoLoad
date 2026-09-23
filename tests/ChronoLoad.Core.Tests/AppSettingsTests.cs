@@ -123,6 +123,18 @@ public class AppSettingsTests
     }
 
     [Fact]
+    public void The_settings_folder_follows_the_environment_so_tests_cannot_touch_real_settings()
+    {
+        // Environment.GetFolderPath 는 환경변수를 보지 않고 셸에 직접 묻는다. 그것만 쓰면
+        // 아래 TempHome 이 아무것도 격리하지 못하고 테스트가 사용자의 실제 설정을 읽고 쓴다.
+        // 실제로 그랬다 — 테스트 한 번에 사용자의 창 위치가 지워졌다.
+        using var temp = new TempHome();
+
+        Assert.StartsWith(Environment.GetEnvironmentVariable("LOCALAPPDATA")!,
+                          AppSettings.Directory, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void A_placement_written_before_the_pixel_schema_is_discarded()
     {
         using var temp = new TempHome();

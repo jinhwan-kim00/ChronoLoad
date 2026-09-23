@@ -161,13 +161,8 @@ public sealed class CardViewModel
     /// <summary>표시 창 안의 인덱스로 값을 읽는다. 창은 항상 최근 <paramref name="window"/>개다.</summary>
     public static float SampleAt(MetricSeries series, int index, int window = 240)
     {
-        int count = series.Count;
-        if (count == 0) return float.NaN;
-
-        // 표시 창이 아직 다 차지 않았으면 왼쪽이 비어 있다. 인덱스를 실제 샘플로 옮긴다.
-        int offset = Math.Min(window, count) - window;
-        int actual = index + offset;
-        return actual < 0 || actual >= count ? float.NaN : series[actual];
+        int absolute = series.AbsoluteIndexOf(index, window);
+        return absolute < 0 ? float.NaN : series[absolute];
     }
 
     /// <summary>
@@ -184,7 +179,19 @@ public sealed class CardViewModel
         }
 
         rows.Add((string.Empty, Fmt(Primary, DisplayUnit, DisplayFactor)));
-        if (!full) return rows;
+
+        if (!full)
+        {
+            // 요약 칩도 계열이 여럿이면 각각을 보여준다(UX §04: 이더넷 "↓ ↑ 속도",
+            // 디스크 "읽기 / 쓰기", GPU "사용률, 전용+공유"). 한쪽만 내면 미러 차트가
+            // "읽기만 있고 쓰기는 없는" 것처럼 읽히고, GPU 는 사용률만으로 메모리를 알 수 없다.
+            if (Secondary is not null && SecondaryIsOpposite)
+                rows.Add(("↑", Fmt(Secondary, DisplayUnit, DisplayFactor)));
+            else if (MemoryHeadline(index) is { } memory)
+                rows.Add((string.Empty, memory.Text));
+
+            return rows;
+        }
 
         // 왜 값이 비는지를 먼저 말한다. 아래의 "—" 들이 고장으로 읽히면 안 된다.
         if (IsStandby) rows.Add(("상태", "저전력 대기 — 깨우지 않음"));
