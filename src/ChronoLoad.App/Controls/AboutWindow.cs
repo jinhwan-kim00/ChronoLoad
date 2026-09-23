@@ -18,6 +18,8 @@ namespace ChronoLoad.App.Controls;
 /// </remarks>
 public sealed class AboutWindow : Window
 {
+    public const string ProjectUrl = "https://github.com/jinhwan-kim00/ChronoLoad";
+
     /// <summary>그림자가 잘리지 않도록 창 안쪽에 비워두는 여백.</summary>
     private const double ShadowMargin = 14;
 
@@ -30,7 +32,7 @@ public sealed class AboutWindow : Window
         WindowStyle = WindowStyle.None;
         ResizeMode = ResizeMode.NoResize;
         SizeToContent = SizeToContent.Height;
-        Width = 300 + ShadowMargin * 2;
+        Width = 340 + ShadowMargin * 2;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         ShowInTaskbar = false;
 
@@ -68,6 +70,9 @@ public sealed class AboutWindow : Window
 
         foreach (var (name, value) in Facts())
             root.Children.Add(Row(name, value, palette));
+
+        // 스킴은 빼고 보여준다. 줄이 접히면 주소가 아니라 문단처럼 읽힌다.
+        root.Children.Add(Link("GitHub", ProjectUrl, ProjectUrl.Replace("https://", ""), palette));
 
         var close = new Button
         {
@@ -149,6 +154,40 @@ public sealed class AboutWindow : Window
         grid.Children.Add(label);
         grid.Children.Add(content);
         return grid;
+    }
+
+    /// <summary>눌러서 브라우저로 여는 줄. 주소를 손으로 옮겨 적게 하지 않는다.</summary>
+    private static Grid Link(string name, string url, string display, ThemePalette palette)
+    {
+        var grid = Row(name, string.Empty, palette);
+        var text = (TextBlock)grid.Children[1];
+        text.TextWrapping = TextWrapping.NoWrap;
+
+        var hyperlink = new System.Windows.Documents.Hyperlink(new System.Windows.Documents.Run(display))
+        {
+            Foreground = Brush(palette.Cpu),
+            TextDecorations = null,
+        };
+        hyperlink.RequestNavigate += (_, e) => Open(e.Uri.ToString());
+        hyperlink.NavigateUri = new Uri(url);
+        hyperlink.Click += (_, _) => Open(url);
+
+        text.Inlines.Add(hyperlink);
+        text.Cursor = Cursors.Hand;
+        return grid;
+    }
+
+    private static void Open(string url)
+    {
+        try
+        {
+            System.Diagnostics.Process.Start(
+                new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true });
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            // 기본 브라우저가 없거나 막혀 있다. 주소는 창에 그대로 보이니 옮겨 적을 수 있다.
+        }
     }
 
     /// <summary>두 색을 섞는다. 테두리를 카드보다 밝게 하되 본문을 압도하지는 않게.</summary>
