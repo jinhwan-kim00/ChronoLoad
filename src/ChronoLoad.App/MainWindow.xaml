@@ -27,6 +27,30 @@
 
   <Window.Resources>
     <!-- 타이틀바 아이콘 버튼. 텍스트 없이 16px 글리프만 -->
+    <Style x:Key="ActionButton" TargetType="Button">
+      <Setter Property="Width" Value="26"/>
+      <Setter Property="Height" Value="26"/>
+      <Setter Property="Background" Value="{DynamicResource Brush.Surface2}"/>
+      <Setter Property="BorderThickness" Value="0"/>
+      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="VerticalAlignment" Value="Center"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="Root" Background="{TemplateBinding Background}" CornerRadius="8"
+                    BorderThickness="1" BorderBrush="{DynamicResource Brush.Line}">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="Root" Property="BorderBrush" Value="{DynamicResource Brush.Fg}"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
     <Style x:Key="ChromeButton" TargetType="Button">
       <Setter Property="Width" Value="26"/>
       <Setter Property="Height" Value="22"/>
@@ -74,23 +98,13 @@
                  shell:WindowChrome.IsHitTestVisibleInChrome="True">
         <ContentControl x:Name="BrandHost" DockPanel.Dock="Left" VerticalAlignment="Center"
                         Margin="0,0,9,0"/>
-        <Button x:Name="ResetButton" Width="26" Height="26" DockPanel.Dock="Left"
-                Background="{DynamicResource Brush.Surface2}" BorderThickness="0" Cursor="Hand"
-                VerticalAlignment="Center">
-          <Button.Template>
-            <ControlTemplate TargetType="Button">
-              <Border x:Name="Root" Background="{TemplateBinding Background}" CornerRadius="8"
-                      BorderThickness="1" BorderBrush="{DynamicResource Brush.Line}">
-                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
-              </Border>
-              <ControlTemplate.Triggers>
-                <Trigger Property="IsMouseOver" Value="True">
-                  <Setter TargetName="Root" Property="BorderBrush" Value="{DynamicResource Brush.Fg}"/>
-                </Trigger>
-              </ControlTemplate.Triggers>
-            </ControlTemplate>
-          </Button.Template>
-        </Button>
+        <!--
+          ⟲ 와 스냅샷은 짝이다 — 하나는 측정 구간의 시작점을 옮기고, 하나는 그 구간을 통째로
+          떠낸다(§8.8). 둘 다 "지금 재고 있는 것"을 다루므로 같은 모양·같은 자리에 둔다.
+        -->
+        <Button x:Name="ResetButton" Style="{StaticResource ActionButton}" DockPanel.Dock="Left"/>
+        <Button x:Name="SnapshotButton" Style="{StaticResource ActionButton}" DockPanel.Dock="Left"
+                Margin="5,0,0,0" ToolTip="스냅샷 창 — 지금 버퍼를 복제해 고정 표시"/>
 
         <TextBlock x:Name="ElapsedText" DockPanel.Dock="Left" Margin="8,0,0,0"
                    FontFamily="Cascadia Mono, Consolas" FontSize="13"

@@ -1,3 +1,4 @@
+using System.Media;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -97,6 +98,7 @@ public partial class MainWindow : Window
         PinButton.Click += (_, _) => { Topmost = !Topmost; ApplyTheme(); MarkSettingsDirty(); };
         ThemeButton.Click += (_, _) => { _theme.Toggle(); RememberTheme(); };
         SettingsButton.Click += (_, _) => OpenSettings();
+        SnapshotButton.Click += (_, _) => OpenSnapshot();
         MinimizeButton.Click += (_, _) => WindowState = WindowState.Minimized;
         CloseButton.Click += (_, _) => Close();
 
@@ -563,6 +565,27 @@ public partial class MainWindow : Window
         popover.Show();
     }
 
+    /// <summary>
+    /// 스냅샷 창(§9.6). 지금 링 버퍼에 있는 것을 통째로 복제해 새 창에 띄운다.
+    /// </summary>
+    /// <remarks>
+    /// 모달리스이고 <b>여러 개</b> 열 수 있다 — 테스트 A·B 를 나란히 놓고 비교하는 것이
+    /// 주 용도다. 그래서 창을 세어 두지 않는다. 본 창이 닫히면 소유된 창도 함께 닫힌다.
+    /// </remarks>
+    private void OpenSnapshot()
+    {
+        var snapshot = MetricSnapshot.Capture(_registry);
+        if (snapshot.IsEmpty)
+        {
+            // 뜬 직후에는 떠낼 것이 없다. 빈 창을 띄워 고장처럼 보이게 하느니 아무것도 하지 않는다.
+            SystemSounds.Beep.Play();
+            return;
+        }
+
+        new SnapshotWindow(this, snapshot, SampleGaps.ThresholdFor(
+            _engine?.NominalFastPeriod ?? TimeSpan.FromMilliseconds(250))).Show();
+    }
+
     /// <summary>지금 시간 폭이 덮는 점 수. 버퍼가 아직 짧으면 가진 만큼이다.</summary>
     private int WindowPointsForWidth() => Math.Max(2, _registry.PointsWithin(_timeWidth));
 
@@ -632,6 +655,7 @@ public partial class MainWindow : Window
         PinButton.Content = Glyph(Icons.Pin);
         ThemeButton.Content = Glyph(Icons.Theme);
         SettingsButton.Content = Glyph(Icons.Settings);
+        SnapshotButton.Content = Glyph(Icons.Snapshot, 15);
         MinimizeButton.Content = Glyph(Icons.Minimize);
         CloseButton.Content = Glyph(Icons.Close);
 
@@ -704,6 +728,7 @@ public partial class MainWindow : Window
             if (button.Content is Shape shape) shape.Stroke = new SolidColorBrush(palette.Dim);
         if (PinButton.Content is Shape pin) pin.Stroke = new SolidColorBrush(Topmost ? palette.Gpu : palette.Dim);
         if (ResetButton.Content is Shape reset) reset.Stroke = new SolidColorBrush(palette.Fg);
+        if (SnapshotButton.Content is Shape snapshot) snapshot.Stroke = new SolidColorBrush(palette.Fg);
 
         for (int i = 0; i < _cards.Count; i++)
         {
@@ -761,6 +786,8 @@ public partial class MainWindow : Window
             e.Handled = true;
         }
     }
+
+
 
     protected override void OnClosed(EventArgs e)
     {

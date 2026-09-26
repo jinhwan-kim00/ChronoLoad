@@ -36,7 +36,8 @@ public partial class App : Application
             RunRenderTest(e.Args[renderTestIndex + 1], e.Args.Contains("--light"),
                 e.Args.Contains("--collapsed"), scrub, e.Args.Contains("--hotplug"),
                 e.Args.Contains("--about"), e.Args.Contains("--scrub-drift"),
-                e.Args.Contains("--gap"), width, e.Args.Contains("--settings"));
+                e.Args.Contains("--gap"), width, e.Args.Contains("--settings"),
+                e.Args.Contains("--snapshot"));
             return;
         }
 
@@ -143,7 +144,8 @@ public partial class App : Application
     /// </summary>
     private void RunRenderTest(string outputPath, bool light, bool collapsed, int? scrubIndex = null,
                                bool hotPlug = false, bool about = false, bool scrubDrift = false,
-                               bool gap = false, TimeSpan? width = null, bool settings = false)
+                               bool gap = false, TimeSpan? width = null, bool settings = false,
+                               bool snapshot = false)
     {
         // 렌더 테스트는 합성 장치를 쓴다. 실제 설정 폴더를 그대로 쓰면 사용자의 창 위치를
         // 읽어 와 그림이 달라지고, 끝낼 때 gpu:demo 같은 가짜 장치 키를 사용자 파일에 남긴다.
@@ -177,6 +179,8 @@ public partial class App : Application
         else if (scrubDrift) RunScrubDriftScript(window, registry, engine!, outputPath);
         else if (about) CaptureAfter(500, window, outputPath, () => CaptureAbout(window, outputPath));
         else if (settings) CaptureAfter(500, window, outputPath, () => CaptureSettings(window, outputPath));
+        else if (snapshot) CaptureAfter(500, window, outputPath,
+            () => CaptureSnapshot(window, registry, outputPath));
         else CaptureAfter(600, window, outputPath, Shutdown);
     }
 
@@ -274,6 +278,47 @@ public partial class App : Application
     }
 
     /// <summary>정보 창을 띄워 따로 찍는다. 대화 상자는 별도 창이라 본 창 캡처에 잡히지 않는다.</summary>
+    /// <summary>스냅샷 창(§9.6)을 띄워 따로 담는다.</summary>
+    private void CaptureSnapshot(Window owner, Core.Metrics.MetricRegistry registry, string outputPath)
+    {
+        var snapshot = Core.Metrics.MetricSnapshot.Capture(registry);
+        var window = new Controls.SnapshotWindow(owner, snapshot,
+            Core.Layout.SampleGaps.ThresholdFor(TimeSpan.FromMilliseconds(250)))
+        {
+            WindowStartupLocation = WindowStartupLocation.Manual,
+            Left = -10_000,
+            Top = -10_000,
+            ShowActivated = false,
+        };
+        window.Show();
+
+        string stem = Path.Combine(
+            Path.GetDirectoryName(Path.GetFullPath(outputPath))!,
+            Path.GetFileNameWithoutExtension(outputPath));
+
+        CaptureAfter(700, window, stem + "-snapshot.png", () =>
+        {
+            // 선택과 크롭은 드래그로만 닿는 경로다. 눈으로 확인할 수 있게 한 장 더 담는다.
+            window.Preselect((int)(snapshot.Count * 0.35), (int)(snapshot.Count * 0.62));
+            CaptureAfter(400, window, stem + "-snapshot-selected.png", () =>
+            {
+                window.CropNow();
+                CaptureAfter(400, window, stem + "-snapshot-cropped.png", () =>
+                {
+                    // 점 하나만 집으면 구간이 아니라 순간이다 — 오버레이로 그때의 값을 읽는다.
+                    int at = (int)(snapshot.Count * 0.45);
+                    window.Preselect(at, at);
+                    CaptureAfter(400, window, stem + "-snapshot-scrub.png", () =>
+                    {
+                        window.Close();
+                        owner.Close();
+                        Shutdown();
+                    });
+                });
+            });
+        });
+    }
+
     /// <summary>설정 팝오버(§11)를 띄워 따로 담는다. 본 창 캡처에는 나오지 않는 별도 창이다.</summary>
     private void CaptureSettings(Window owner, string outputPath)
     {

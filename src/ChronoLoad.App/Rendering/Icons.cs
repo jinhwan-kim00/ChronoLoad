@@ -68,6 +68,45 @@ public static class Icons
         RoundedRect(2, 4, 12, 9, 1.5), RoundedRect(5, 7, 6, 3, 0.5),
         Lines((5, 2, 5, 4), (11, 2, 11, 4)));
 
+    // ── 스냅샷 창 (§8.8 · §9.6) ─────────────────────────────────
+
+    /// <summary>스냅샷 — 카메라. 본체 · 돌출부 · 렌즈.</summary>
+    public static Geometry Snapshot { get; } = Group(
+        RoundedRect(2, 5, 12, 8, 2),
+        Parse("M5.8,5 L6.6,3.2 H9.4 L10.2,5"),
+        Circle(8, 9, 2.5));
+
+    /// <summary>전체 보기 — 양끝 기둥과 바깥으로 벌어지는 화살표. 가로만 맞춘다는 뜻이다.</summary>
+    public static Geometry FitWidth { get; } = Group(
+        Lines((2.4, 3.5, 2.4, 12.5), (13.6, 3.5, 13.6, 12.5)),
+        Parse("M6.2,8 H3.2 M5,6.2 L3.1,8 L5,9.8"),
+        Parse("M9.8,8 H12.8 M11,6.2 L12.9,8 L11,9.8"));
+
+    /// <summary>크롭 — 겹친 L 두 개. 관습이 굳은 글리프라 설명이 필요 없다.</summary>
+    public static Geometry Crop { get; } = Group(
+        Parse("M4.5,1.8 V11.5 H14.2"),
+        Parse("M1.8,4.5 H11.5 V14.2"));
+
+    /// <summary>
+    /// 되돌리기 — <b>열린 갈고리</b>. <see cref="Reset"/>(닫힌 원호)과 실루엣부터 갈라야 한다.
+    /// 둘 다 우리말로는 "되돌린다"지만 하나는 통계 기준점을 옮기고 하나는 크롭을 취소한다.
+    /// </summary>
+    public static Geometry Undo { get; } = Group(
+        Parse("M2.6,6.4 H9.6 A3.8,3.8 0 0 1 9.6,14 H6.4"),
+        Parse("M5.6,3.4 L2.6,6.4 L5.6,9.4"));
+
+    /// <summary>내보내기 — 아래 화살표와 바닥선.</summary>
+    public static Geometry Export { get; } = Group(
+        Parse("M8,2.6 V10.4"),
+        Parse("M4.8,7.2 L8,10.4 L11.2,7.2"),
+        Parse("M2.8,12.6 H13.2"));
+
+    public static Geometry ZoomOut { get; } = Group(
+        Circle(7, 7, 4), Lines((10, 10, 13.6, 13.6), (5, 7, 9, 7)));
+
+    public static Geometry ZoomIn { get; } = Group(
+        Circle(7, 7, 4), Lines((10, 10, 13.6, 13.6), (5, 7, 9, 7), (7, 5, 7, 9)));
+
     public static Geometry Chevron { get; } = Parse("M4,6 L8,10 L12,6");
     public static Geometry Reset { get; } = Parse("M13,8 A5,5 0 1 1 11.4,4.3 M13,2 V5 H10");
     public static Geometry Pin { get; } = Parse("M8,10 V14 M5,3 H11 L10,8 L12,10 H4 L6,8 Z");
