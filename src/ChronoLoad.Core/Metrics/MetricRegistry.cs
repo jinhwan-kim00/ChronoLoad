@@ -97,10 +97,16 @@ public sealed class MetricRegistry
     private readonly List<PercentileTracker?>[] _percentiles = [[], []];
     private int _revision;
 
+    // 시간 축(§7.4). 값 링과 같은 길이지만 슬롯당이 아니라 프레임당 하나다 —
+    // 모든 슬롯이 한 틱에 함께 커밋되므로 시각도 한 번만 있으면 된다(3600 × 8B = 28.8KB).
+    private readonly long[] _stamps;
+    private long _frames;
+
     public MetricRegistry(int seriesCapacity = 3600)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(seriesCapacity, 2);
         _capacity = seriesCapacity;
+        _stamps = new long[seriesCapacity];
     }
 
     /// <summary>시리즈 하나가 보관하는 샘플 수. 250ms × 3600 = 15분.</summary>
@@ -334,20 +340,6 @@ public sealed class MetricRegistry
         }
     }
 
-    /// <summary>슬롯 하나에 값을 커밋한다(시리즈 기록 + 전 스코프 통계 누적). 샘플 엔진 전용.</summary>
-    internal void Commit(int slot, float value, bool measured = true)
-    {
-        var series = _series[slot];
-        if (series is null) return;      // 회수된 슬롯
-        series.Write(value, measured);
-        if (!measured) return;
-        for (int scope = 0; scope < StatsScopes.Count; scope++)
-        {
-            _stats[scope][slot].Add(value);
-            PercentileOf(slot, scope)?.Add(value);
-        }
-    }
-
     /// <summary>
     /// 한 스코프의 전 지표 통계를 리셋한다. 접힌 카드와 표시하지 않는 지표까지 전부 포함하되,
     /// <b>다른 스코프는 건드리지 않는다</b>.
@@ -388,20 +380,36 @@ public sealed class MetricRegistry
     /// 외부 소스가 한 프레임을 밀어 넣는다. 리플레이·데모·골든 이미지 렌더 테스트처럼
     /// 센서 없이 파이프라인을 구동해야 하는 경우에 쓴다.
     /// </summary>
-    public void PushFrame(ReadOnlySpan<float> values) => CommitAll(values, ReadOnlySpan<bool>.Empty);
+    public void PushFrame(ReadOnlySpan<float> values) => PushFrame(values, DateTime.UtcNow.Ticks);
+
+    /// <inheritdoc cref="PushFrame(ReadOnlySpan{float})"/>
+    /// <param name="nowUtcTicks">이 프레임의 커밋 시각. 시간 축(§7.4)에 그대로 들어간다.</param>
+    public void PushFrame(ReadOnlySpan<float> values, long nowUtcTicks) =>
+        CommitAll(values, ReadOnlySpan<bool>.Empty, nowUtcTicks);
 
     /// <summary>모든 슬롯을 실측값으로 커밋한다(테스트·단순 경로용).</summary>
-    internal void CommitAll(ReadOnlySpan<float> values) => CommitAll(values, ReadOnlySpan<bool>.Empty);
+    internal void CommitAll(ReadOnlySpan<float> values) =>
+        CommitAll(values, ReadOnlySpan<bool>.Empty, DateTime.UtcNow.Ticks);
+
+    /// <inheritdoc cref="CommitAll(ReadOnlySpan{float}, ReadOnlySpan{bool}, long)"/>
+    internal void CommitAll(ReadOnlySpan<float> values, ReadOnlySpan<bool> measured) =>
+        CommitAll(values, measured, DateTime.UtcNow.Ticks);
 
     /// <summary>
     /// 한 틱의 값을 커밋한다. 시리즈에는 <b>전부</b> 기록해 시간 축을 맞추고,
     /// 통계에는 <paramref name="measured"/>가 true인 슬롯만 반영한다.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Slow 티어 지표는 Fast 틱마다 직전 값이 다시 기록된다. 그 반복을 통계에 넣으면
     /// 샘플 수가 주기 비율만큼 부풀고, 편차가 0인 반복값이 표준편차를 끌어내려 실제보다 안정적으로 보인다.
+    /// </para>
+    /// <para>
+    /// <b>이 메서드가 시간 축을 한 칸 밀어내는 유일한 곳이다</b>(§7.4). 슬롯 하나만 따로 기록하는
+    /// 경로를 두면 시리즈마다 프레임 수가 어긋나 인덱스↔시각 대응이 조용히 깨진다.
+    /// </para>
     /// </remarks>
-    internal void CommitAll(ReadOnlySpan<float> values, ReadOnlySpan<bool> measured)
+    internal void CommitAll(ReadOnlySpan<float> values, ReadOnlySpan<bool> measured, long nowUtcTicks)
     {
         lock (_gate)
         {
@@ -421,7 +429,91 @@ public sealed class MetricRegistry
                 for (int scope = 0; scope < StatsScopes.Count; scope++)
                     _stats[scope][i].Add(values[i]);
             }
+
+            // 값을 다 쓴 뒤에 시각을 공개한다. 프레임 수가 먼저 늘면 소비자가
+            // 아직 채우지 않은 칸을 읽는다.
+            _stamps[(int)(_frames % _capacity)] = nowUtcTicks;
+            Volatile.Write(ref _frames, _frames + 1);
         }
+    }
+
+    // ── 시간 축 (§7.4) ────────────────────────────────────────────────
+    //
+    // 시리즈는 값만 담고 차트는 점 간격이 일정하다고 가정해 그린다. 그런데 적응형
+    // 백오프(§6.3)가 Fast 주기를 배수로 늘리므로 실제 간격은 균일하지 않다. 프레임마다
+    // 커밋 시각을 남겨 두면 "이 점이 언제인가"를 되물을 수 있다.
+    //
+    // 인덱스↔프레임 대응은 **시리즈가 첫 기록 이후 매 프레임 한 번씩 기록된다**는
+    // 불변식에 기댄다. CommitAll 이 유일한 기록 경로이고 슬롯은 회수돼도 목록에서
+    // 빠지지 않으므로(ReleaseSlot 은 null 로만 둔다) 살아 있는 슬롯이 프레임을
+    // 건너뛰는 일은 없다. 늦게 등록된 시리즈는 Count 가 작을 뿐 끝이 같다.
+
+    /// <summary>커밋된 프레임 총수. 시리즈 인덱스와 시각을 잇는 좌표계다.</summary>
+    public long Frames => Volatile.Read(ref _frames);
+
+    /// <summary>가장 최근 프레임의 커밋 시각(UTC ticks). 아직 한 프레임도 없으면 null.</summary>
+    public long? LatestTimestamp => TimestampAtFrame(Volatile.Read(ref _frames) - 1);
+
+    /// <summary>
+    /// 프레임 번호의 커밋 시각(UTC ticks). 아직 오지 않았거나 링에서 밀려났으면 null.
+    /// </summary>
+    public long? TimestampAtFrame(long frame)
+    {
+        long frames = Volatile.Read(ref _frames);
+        if (frame < 0 || frame >= frames || frames - frame > _capacity) return null;
+        return _stamps[(int)(frame % _capacity)];
+    }
+
+    /// <summary>
+    /// 시리즈의 <paramref name="index"/>번째 샘플(0 = 가장 오래된 유효 샘플)이 커밋된 프레임.
+    /// 범위를 벗어나면 −1.
+    /// </summary>
+    public long FrameAt(MetricSeries series, int index)
+    {
+        ArgumentNullException.ThrowIfNull(series);
+        int count = series.Count;
+        if ((uint)index >= (uint)count) return -1;
+        return Volatile.Read(ref _frames) - count + index;
+    }
+
+    /// <summary>
+    /// 시리즈의 <paramref name="index"/>번째 샘플이 커밋된 시각(UTC ticks). 없으면 null.
+    /// </summary>
+    public long? TimestampAt(MetricSeries series, int index)
+    {
+        long frame = FrameAt(series, index);
+        return frame < 0 ? null : TimestampAtFrame(frame);
+    }
+
+    /// <summary>
+    /// 가장 최근 <paramref name="destination"/>.Length 개 프레임의 커밋 시각을
+    /// 시간 순(오래된 것 먼저)으로 복사하고 실제 복사한 개수를 돌려준다.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="MetricSeries.CopyLatest(Span{float})"/>와 같은 규약이다. 값과 시각을
+    /// 같은 길이로 떠내면 인덱스가 그대로 대응한다 — 스냅샷 복제와 CSV 내보내기가 이것을 쓴다.
+    /// </remarks>
+    public int CopyTimestamps(Span<long> destination)
+    {
+        if (destination.IsEmpty) return 0;
+
+        for (int attempt = 0; attempt < 3; attempt++)
+        {
+            long before = Volatile.Read(ref _frames);
+            int available = (int)Math.Min(before, _capacity);
+            int n = Math.Min(available, destination.Length);
+            if (n == 0) return 0;
+
+            long start = before - n;
+            for (int i = 0; i < n; i++)
+                destination[i] = _stamps[(int)((start + i) % _capacity)];
+
+            // 생산자가 우리가 읽은 가장 오래된 칸을 아직 덮어쓰지 않았으면 일관된 스냅샷이다.
+            if (Volatile.Read(ref _frames) - start <= _capacity) return n;
+        }
+
+        destination[0] = _stamps[(int)((Volatile.Read(ref _frames) - 1) % _capacity)];
+        return 1;
     }
 
     /// <summary>슬롯 하나를 비우고 재사용 대기열에 넣는다. 시리즈·통계·분위수를 모두 지운다.</summary>

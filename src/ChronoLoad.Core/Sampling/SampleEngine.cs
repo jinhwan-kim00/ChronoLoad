@@ -290,7 +290,9 @@ public sealed class SampleEngine : IAsyncDisposable
 
         // Slow 티어 값은 갱신되지 않아도 직전 값이 스크래치에 남아 있으므로 시간 축이 어긋나지 않는다.
         // 다만 유지된 값은 실측이 아니므로 통계에서는 빠진다.
-        _registry.CommitAll(_scratch, _measured);
+        // 시각은 틱 시작값을 쓴다. 프로바이더가 본 것(SampleWriter)과 같은 값이어야
+        // 시간 축과 델타 계산이 같은 순간을 가리킨다.
+        _registry.CommitAll(_scratch, _measured, nowUtc);
 
         LastSampleDuration = Stopwatch.GetElapsedTime(begin);
         TotalSampleDuration += LastSampleDuration;

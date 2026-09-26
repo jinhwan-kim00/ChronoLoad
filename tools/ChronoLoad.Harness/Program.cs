@@ -232,6 +232,27 @@ Console.WriteLine($"틱 {ticksSeen}회 · 기대치 약 {seconds / options.FastP
 if (engine.DisabledProviders.Count > 0)
     Console.WriteLine($"비활성 프로바이더: {string.Join(", ", engine.DisabledProviders)}");
 
+// 시간 축(§7.4). 프레임 수만으로는 축이 맞는지 알 수 없다 — 벽시계와 대조해야 한다.
+{
+    long frames = registry.Frames;
+    var stamps = new long[Math.Min(frames, registry.SeriesCapacity)];
+    int copied = registry.CopyTimestamps(stamps);
+    Console.WriteLine();
+    if (copied < 2) Console.WriteLine($"시간 축 프레임 {frames}개 — 간격을 재기엔 짧다");
+    else
+    {
+        var gaps = new long[copied - 1];
+        for (int i = 1; i < copied; i++) gaps[i - 1] = stamps[i] - stamps[i - 1];
+        Array.Sort(gaps);
+        var span = TimeSpan.FromTicks(stamps[copied - 1] - stamps[0]);
+        Console.WriteLine(
+            $"시간 축 프레임 {frames}개 · 구간 {span.TotalSeconds:0.00}s " +
+            $"· 간격 중앙 {TimeSpan.FromTicks(gaps[gaps.Length / 2]).TotalMilliseconds:0.0}ms " +
+            $"(기대 {options.FastPeriod.TotalMilliseconds:0}ms) " +
+            $"· 최대 {TimeSpan.FromTicks(gaps[^1]).TotalMilliseconds:0.0}ms");
+    }
+}
+
 RefreshSlots();
 Console.WriteLine();
 Console.WriteLine("장치");
