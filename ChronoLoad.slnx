@@ -1,4 +1,9 @@
 <Solution>
+  <Folder Name="/docs/">
+    <File Path="README.md" />
+    <File Path="PROJECT.md" />
+    <File Path="docs/ux-design.html" />
+  </Folder>
   <Folder Name="/src/">
     <Project Path="src/ChronoLoad.App/ChronoLoad.App.csproj" />
     <Project Path="src/ChronoLoad.Core/ChronoLoad.Core.csproj" />

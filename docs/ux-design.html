@@ -710,7 +710,225 @@ canvas{display:block;width:100%;height:100%}
   <li>접힌 카드도 스크린 리더에서는 전체 값이 읽힌다</li>
 </ul>
 
-<h2 data-n="19">열린 UX 질문</h2>
+<h2 data-n="19">스냅샷 창 <span class="new">v1.5</span></h2>
+<p class="lead">메인 창은 곁눈질용이라 화면이 계속 흐른다. 방금 지나간 스파이크를 붙들어
+<b>구간</b>으로 재려면 흐름 자체를 멈춰야 한다. 메인 창 제목 표시줄의 <b>스냅샷 버튼</b>을 누르면
+지금 링 버퍼에 있는 것을 통째로 복제해 새 창에 띄운다 — 그 창에는 새 데이터가 들어오지 않는다.
+설계는 PROJECT.md §9.6.</p>
+
+<style>
+.snapwin{--bg:#0E1116;--surface:#161B22;--surface2:#1C232C;--line:#262D38;
+  --fg:#E6EDF3;--dim:#7D8792;--faint:#4A5260;
+  --cpu:#38BDF8;--mem:#A78BFA;--net:#34D399;--disk:#F472B6;--gpu:#FBBF24;
+  background:var(--bg);border:1px solid var(--line);border-radius:12px;overflow:hidden;
+  font-family:var(--sans);color:var(--fg);margin:20px 0}
+.snapwin .sw-title{height:34px;display:flex;align-items:center;gap:10px;padding:0 10px;
+  border-bottom:1px solid var(--line);background:var(--surface);user-select:none}
+.snapwin .sw-title b{font-size:12.5px;font-weight:600}
+.snapwin .sw-time{font-family:var(--mono);font-size:12.5px;font-variant-numeric:tabular-nums;color:var(--fg)}
+.snapwin .sw-sub{font-size:11.5px;color:var(--dim)}
+.snapwin .sw-btns{margin-left:auto;display:flex;gap:2px;color:var(--dim);font-family:var(--mono);font-size:12px}
+.snapwin .sw-btns span{width:26px;height:22px;display:grid;place-items:center;border-radius:5px}
+.snapwin .sw-tools{height:38px;display:flex;align-items:center;gap:6px;padding:0 10px;
+  border-bottom:1px solid var(--line);background:var(--surface2)}
+.snapwin .sw-b{font-size:11.5px;padding:4px 10px;border-radius:7px;border:1px solid var(--line);
+  background:var(--surface);color:var(--fg);white-space:nowrap}
+.snapwin .sw-b.ghost{color:var(--faint)}
+.snapwin .sw-b.prim{border-color:rgba(251,191,36,.45);color:#FBBF24}
+.snapwin .sw-b.right{margin-left:auto}
+.snapwin .sw-ico{width:28px;height:24px;display:grid;place-items:center;border-radius:7px;
+  border:1px solid var(--line);background:var(--surface);color:var(--fg)}
+.snapwin .sw-ico.off{color:var(--faint);border-color:rgba(38,45,56,.6)}
+.snapwin .sw-ico.prim{border-color:rgba(251,191,36,.5);color:#FBBF24}
+.snapwin .sw-ico.right{margin-left:auto}
+.snapwin .sw-sep{width:1px;height:16px;background:var(--line);margin:0 4px}
+.snapwin .sw-body{padding:8px 10px;display:flex;flex-direction:column;gap:9px;
+  max-height:460px;overflow:hidden;position:relative}
+.snapwin .snap-row{display:flex;flex-direction:column;gap:3px}
+.snapwin .snap-sum{display:flex;align-items:center;gap:8px;font-size:11.5px}
+.snapwin .snap-dot{width:8px;height:8px;border-radius:2px;flex:0 0 8px}
+.snapwin .snap-name{font-weight:600;letter-spacing:.01em}
+.snapwin .snap-stats{font-family:var(--mono);font-variant-numeric:tabular-nums;color:var(--dim);font-size:11px}
+.snapwin .snap-stats b{color:var(--fg);font-weight:600}
+.snapwin .snap-stats span{margin-left:8px}
+.snapwin .snap-scope{margin-left:auto;font-size:10px;font-family:var(--mono);letter-spacing:.06em;
+  padding:1px 7px;border-radius:999px;border:1px solid rgba(251,191,36,.4);
+  background:rgba(251,191,36,.10);color:#FBBF24}
+.snapwin .snap-plot{display:flex;gap:5px;align-items:stretch}
+.snapwin .sw-gutter{width:26px;flex:0 0 26px;display:flex;flex-direction:column;justify-content:space-between;
+  font-family:var(--mono);font-size:8.5px;color:var(--faint);text-align:right;padding:1px 0}
+.snapwin .snap-chart{flex:1;min-width:0;height:96px;display:block;border-radius:6px;background:var(--surface)}
+.snapwin .snap-chev{color:var(--faint);flex:0 0 11px;transition:transform .18s}
+.snapwin .snap-row.collapsed .snap-chev{transform:rotate(-90deg)}
+.snapwin .snap-row.collapsed .snap-sum{opacity:.72}
+.snapwin .snap-sum{cursor:pointer}
+.snapwin .sw-ruler{display:flex;padding:0 10px;height:14px}
+.snapwin .sw-ruler .track{margin-left:31px;flex:1;position:relative;font-family:var(--mono);
+  font-size:9px;color:var(--faint)}
+.snapwin .sw-ruler .track span{position:absolute;transform:translateX(-50%);white-space:nowrap}
+.snapwin .sw-axis{height:34px;display:flex;align-items:center;gap:10px;padding:0 10px;
+  border-top:1px solid var(--line);background:var(--surface);
+  font-family:var(--mono);font-size:10.5px;color:var(--dim);font-variant-numeric:tabular-nums}
+.snapwin .sw-track{flex:1;height:8px;border-radius:999px;background:var(--surface2);
+  border:1px solid var(--line);position:relative}
+.snapwin .sw-thumb{position:absolute;left:18%;width:46%;top:-1px;bottom:-1px;
+  border-radius:999px;background:var(--faint);opacity:.75}
+.snapwin .sw-zoom{display:flex;align-items:center;gap:6px;color:var(--fg)}
+.snapwin .sw-zoom i{width:20px;height:20px;display:grid;place-items:center;border-radius:5px;
+  border:1px solid var(--line);background:var(--surface2);color:var(--fg)}
+</style>
+
+<div class="snapwin">
+  <div class="sw-title">
+    <b>ChronoLoad</b>
+    <span class="sw-time">14:32:07</span>
+    <span class="sw-sub">부터 15분 · 3,600 샘플</span>
+    <span class="sw-btns"><span>&#8211;</span><span>&#9633;</span><span>&#10005;</span></span>
+  </div>
+  <div class="sw-tools">
+    <span class="sw-ico" title="전체"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.4,3.5 V12.5 M13.6,3.5 V12.5"/><path d="M6.2,8 H3.2 M5,6.2 L3.1,8 L5,9.8"/><path d="M9.8,8 H12.8 M11,6.2 L12.9,8 L11,9.8"/></svg></span>
+    <span class="sw-sep"></span>
+    <span class="sw-ico prim" title="선택 구간으로 크롭"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5,1.8 V11.5 H14.2"/><path d="M1.8,4.5 H11.5 V14.2"/></svg></span>
+    <span class="sw-ico off" title="되돌리기 — 크롭이 없어 비활성"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.6,6.4 H9.6 A3.8,3.8 0 0 1 9.6,14 H6.4"/><path d="M5.6,3.4 L2.6,6.4 L5.6,9.4"/></svg></span>
+    <span class="sw-ico right" title="CSV 내보내기"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8,2.6 V10.4"/><path d="M4.8,7.2 L8,10.4 L11.2,7.2"/><path d="M2.8,12.6 H13.2"/></svg></span>
+  </div>
+  <div class="sw-body">
+  <div class="snap-row">
+    <div class="snap-sum"><svg class="snap-chev" viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4,6 L8,10 L12,6"/></svg><span class="snap-dot" style="background:var(--cpu)"></span><span class="snap-name">CPU</span><span class="snap-stats"><b>평균 61.9</b>% <span>최소 35.5</span> <span>최대 97.0</span></span><span class="snap-scope">선택 구간</span></div>
+    <div class="snap-plot">
+      <div class="sw-gutter"><span>100</span><span>50</span><span>0</span></div>
+      <svg class="snap-chart" viewBox="0 0 880 96" preserveAspectRatio="none" role="img" aria-label="CPU 시계열, 선택 구간 평균 61.9%"><rect x="0" y="0" width="880" height="96" fill="rgba(255,255,255,.015)"/><line x1="0" y1="24.0" x2="880" y2="24.0" stroke="rgba(255,255,255,.045)" stroke-width="1"/><line x1="0" y1="48.0" x2="880" y2="48.0" stroke="rgba(255,255,255,.085)" stroke-width="1"/><line x1="0" y1="72.0" x2="880" y2="72.0" stroke="rgba(255,255,255,.045)" stroke-width="1"/><line x1="51.8" y1="0" x2="51.8" y2="96" stroke="rgba(255,255,255,.055)" stroke-width="1"/><line x1="227.8" y1="0" x2="227.8" y2="96" stroke="rgba(255,255,255,.055)" stroke-width="1"/><line x1="403.8" y1="0" x2="403.8" y2="96" stroke="rgba(255,255,255,.055)" stroke-width="1"/><line x1="579.8" y1="0" x2="579.8" y2="96" stroke="rgba(255,255,255,.055)" stroke-width="1"/><line x1="755.8" y1="0" x2="755.8" y2="96" stroke="rgba(255,255,255,.055)" stroke-width="1"/><polygon points="0,96.0 0.0,68.3 3.7,73.2 7.4,75.0 11.0,73.3 14.7,75.5 18.4,79.2 22.1,78.5 25.8,73.2 29.5,67.8 33.1,71.4 36.8,67.4 40.5,64.5 44.2,61.8 47.9,59.5 51.5,58.8 55.2,62.9 58.9,61.8 62.6,62.6 66.3,66.6 70.0,61.8 73.6,66.4 77.3,68.0 81.0,70.2 84.7,71.1 88.4,70.9 92.1,65.4 95.7,60.5 99.4,55.7 103.1,59.7 106.8,57.5 110.5,54.9 114.1,59.8 117.8,61.7 121.5,62.2 125.2,59.2 128.9,63.5 132.6,61.4 136.2,61.1 139.9,62.6 143.6,66.6 147.3,63.6 151.0,60.2 154.6,65.5 158.3,66.8 162.0,71.6 165.7,66.7 169.4,60.7 173.1,61.5 176.7,57.3 180.4,60.8 184.1,57.3 187.8,58.9 191.5,55.3 195.1,61.8 198.8,66.5 202.5,61.1 206.2,58.5 209.9,63.6 213.6,62.7 217.2,61.7 220.9,65.2 224.6,59.2 228.3,58.1 232.0,59.3 235.6,61.1 239.3,58.5 243.0,63.3 246.7,68.7 250.4,72.0 254.1,69.2 257.7,69.4 261.4,63.0 265.1,59.9 268.8,62.6 272.5,57.4 276.2,58.0 279.8,54.2 283.5,50.7 287.2,53.3 290.9,57.0 294.6,52.9 298.2,58.2 301.9,60.1 305.6,59.7 309.3,56.6 313.0,51.8 316.7,55.7 320.3,56.9 324.0,56.5 327.7,46.0 331.4,37.2 335.1,29.7 338.7,23.2 342.4,17.7 346.1,13.2 349.8,9.4 353.5,6.6 357.2,4.5 360.8,3.3 364.5,2.9 368.2,3.3 371.9,4.5 375.6,6.6 379.2,9.4 382.9,13.2 386.6,17.7 390.3,23.2 394.0,29.7 397.7,36.1 401.3,36.5 405.0,39.0 408.7,41.8 412.4,45.0 416.1,42.3 419.7,46.2 423.4,43.9 427.1,48.2 430.8,50.2 434.5,46.7 438.2,44.5 441.8,48.5 445.5,52.1 449.2,52.9 452.9,51.6 456.6,49.0 460.3,51.7 463.9,57.7 467.6,55.1 471.3,61.9 475.0,58.3 478.7,54.3 482.3,54.3 486.0,59.6 489.7,56.3 493.4,58.4 497.1,56.0 500.8,53.9 504.4,61.0 508.1,66.5 511.8,70.2 515.5,74.2 519.2,74.1 522.8,75.1 526.5,77.6 530.2,79.3 533.9,74.5 537.6,71.7 541.3,75.0 544.9,78.4 548.6,75.7 552.3,68.2 556.0,64.9 559.7,66.2 563.3,65.0 567.0,64.4 570.7,68.7 574.4,69.2 578.1,65.2 581.8,64.1 585.4,58.9 589.1,54.9 592.8,57.3 596.5,54.0 600.2,53.5 603.8,52.9 607.5,48.8 611.2,55.4 614.9,55.4 618.6,62.0 622.3,57.6 625.9,57.3 629.6,63.6 633.3,61.1 637.0,61.1 640.7,58.2 644.4,56.0 648.0,57.0 651.7,56.5 655.4,57.9 659.1,55.2 662.8,60.0 666.4,66.1 670.1,71.1 673.8,72.4 677.5,68.1 681.2,71.0 684.9,70.9 688.5,74.0 692.2,71.7 695.9,65.6 699.6,70.4 703.3,71.8 706.9,69.1 710.6,64.3 714.3,62.7 718.0,67.3 721.7,61.8 725.4,58.8 729.0,54.6 732.7,52.6 736.4,52.8 740.1,54.4 743.8,56.8 747.4,55.1 751.1,58.9 754.8,56.6 758.5,62.1 762.2,66.2 765.9,60.9 769.5,61.1 773.2,60.1 776.9,59.4 780.6,59.7 784.3,59.8 787.9,60.7 791.6,66.2 795.3,64.8 799.0,59.2 802.7,61.1 806.4,59.4 810.0,57.9 813.7,64.3 817.4,61.0 821.1,61.7 824.8,56.5 828.5,57.9 832.1,54.3 835.8,59.1 839.5,54.5 843.2,58.4 846.9,55.0 850.5,50.8 854.2,55.1 857.9,52.0 861.6,57.0 865.3,54.6 869.0,51.4 872.6,55.9 876.3,59.5 880.0,55.1 880.0,96.0" fill="var(--cpu)" opacity=".13"/><polyline points="0.0,68.3 3.7,73.2 7.4,75.0 11.0,73.3 14.7,75.5 18.4,79.2 22.1,78.5 25.8,73.2 29.5,67.8 33.1,71.4 36.8,67.4 40.5,64.5 44.2,61.8 47.9,59.5 51.5,58.8 55.2,62.9 58.9,61.8 62.6,62.6 66.3,66.6 70.0,61.8 73.6,66.4 77.3,68.0 81.0,70.2 84.7,71.1 88.4,70.9 92.1,65.4 95.7,60.5 99.4,55.7 103.1,59.7 106.8,57.5 110.5,54.9 114.1,59.8 117.8,61.7 121.5,62.2 125.2,59.2 128.9,63.5 132.6,61.4 136.2,61.1 139.9,62.6 143.6,66.6 147.3,63.6 151.0,60.2 154.6,65.5 158.3,66.8 162.0,71.6 165.7,66.7 169.4,60.7 173.1,61.5 176.7,57.3 180.4,60.8 184.1,57.3 187.8,58.9 191.5,55.3 195.1,61.8 198.8,66.5 202.5,61.1 206.2,58.5 209.9,63.6 213.6,62.7 217.2,61.7 220.9,65.2 224.6,59.2 228.3,58.1 232.0,59.3 235.6,61.1 239.3,58.5 243.0,63.3 246.7,68.7 250.4,72.0 254.1,69.2 257.7,69.4 261.4,63.0 265.1,59.9 268.8,62.6 272.5,57.4 276.2,58.0 279.8,54.2 283.5,50.7 287.2,53.3 290.9,57.0 294.6,52.9 298.2,58.2 301.9,60.1 305.6,59.7 309.3,56.6 313.0,51.8 316.7,55.7 320.3,56.9 324.0,56.5 327.7,46.0 331.4,37.2 335.1,29.7 338.7,23.2 342.4,17.7 346.1,13.2 349.8,9.4 353.5,6.6 357.2,4.5 360.8,3.3 364.5,2.9 368.2,3.3 371.9,4.5 375.6,6.6 379.2,9.4 382.9,13.2 386.6,17.7 390.3,23.2 394.0,29.7 397.7,36.1 401.3,36.5 405.0,39.0 408.7,41.8 412.4,45.0 416.1,42.3 419.7,46.2 423.4,43.9 427.1,48.2 430.8,50.2 434.5,46.7 438.2,44.5 441.8,48.5 445.5,52.1 449.2,52.9 452.9,51.6 456.6,49.0 460.3,51.7 463.9,57.7 467.6,55.1 471.3,61.9 475.0,58.3 478.7,54.3 482.3,54.3 486.0,59.6 489.7,56.3 493.4,58.4 497.1,56.0 500.8,53.9 504.4,61.0 508.1,66.5 511.8,70.2 515.5,74.2 519.2,74.1 522.8,75.1 526.5,77.6 530.2,79.3 533.9,74.5 537.6,71.7 541.3,75.0 544.9,78.4 548.6,75.7 552.3,68.2 556.0,64.9 559.7,66.2 563.3,65.0 567.0,64.4 570.7,68.7 574.4,69.2 578.1,65.2 581.8,64.1 585.4,58.9 589.1,54.9 592.8,57.3 596.5,54.0 600.2,53.5 603.8,52.9 607.5,48.8 611.2,55.4 614.9,55.4 618.6,62.0 622.3,57.6 625.9,57.3 629.6,63.6 633.3,61.1 637.0,61.1 640.7,58.2 644.4,56.0 648.0,57.0 651.7,56.5 655.4,57.9 659.1,55.2 662.8,60.0 666.4,66.1 670.1,71.1 673.8,72.4 677.5,68.1 681.2,71.0 684.9,70.9 688.5,74.0 692.2,71.7 695.9,65.6 699.6,70.4 703.3,71.8 706.9,69.1 710.6,64.3 714.3,62.7 718.0,67.3 721.7,61.8 725.4,58.8 729.0,54.6 732.7,52.6 736.4,52.8 740.1,54.4 743.8,56.8 747.4,55.1 751.1,58.9 754.8,56.6 758.5,62.1 762.2,66.2 765.9,60.9 769.5,61.1 773.2,60.1 776.9,59.4 780.6,59.7 784.3,59.8 787.9,60.7 791.6,66.2 795.3,64.8 799.0,59.2 802.7,61.1 806.4,59.4 810.0,57.9 813.7,64.3 817.4,61.0 821.1,61.7 824.8,56.5 828.5,57.9 832.1,54.3 835.8,59.1 839.5,54.5 843.2,58.4 846.9,55.0 850.5,50.8 854.2,55.1 857.9,52.0 861.6,57.0 865.3,54.6 869.0,51.4 872.6,55.9 876.3,59.5 880.0,55.1" fill="none" stroke="var(--cpu)" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round"/><rect x="301.9" y="0" width="176.7" height="96" fill="rgba(251,191,36,.10)"/><line x1="301.9" y1="0" x2="301.9" y2="96" stroke="var(--page-accent)" stroke-width="1.2"/><line x1="478.7" y1="0" x2="478.7" y2="96" stroke="var(--page-accent)" stroke-width="1.2"/></svg>
+    </div>
+  </div>
+  <div class="snap-row">
+    <div class="snap-sum"><svg class="snap-chev" viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4,6 L8,10 L12,6"/></svg><span class="snap-dot" style="background:var(--gpu)"></span><span class="snap-name">GPU0 RTX 5080</span><span class="snap-stats"><b>평균 54.3</b>% <span>최소 15.8</span> <span>최대 96.0</span></span><span class="snap-scope">선택 구간</span></div>
+    <div class="snap-plot">
+      <div class="sw-gutter"><span>100</span><span>50</span><span>0</span></div>
+      <svg class="snap-chart" viewBox="0 0 880 96" preserveAspectRatio="none" role="img" aria-label="GPU0 RTX 5080 시계열, 선택 구간 평균 54.3%"><rect x="0" y="0" width="880" height="96" fill="rgba(255,255,255,.015)"/><line x1="0" y1="24.0" x2="880" y2="24.0" stroke="rgba(255,255,255,.045)" stroke-width="1"/><line x1="0" y1="48.0" x2="880" y2="48.0" stroke="rgba(255,255,255,.085)" stroke-width="1"/><line x1="0" y1="72.0" x2="880" y2="72.0" stroke="rgba(255,255,255,.045)" stroke-width="1"/><line x1="51.8" y1="0" x2="51.8" y2="96" stroke="rgba(255,255,255,.055)" stroke-width="1"/><line x1="227.8" y1="0" x2="227.8" y2="96" stroke="rgba(255,255,255,.055)" stroke-width="1"/><line x1="403.8" y1="0" x2="403.8" y2="96" stroke="rgba(255,255,255,.055)" stroke-width="1"/><line x1="579.8" y1="0" x2="579.8" y2="96" stroke="rgba(255,255,255,.055)" stroke-width="1"/><line x1="755.8" y1="0" x2="755.8" y2="96" stroke="rgba(255,255,255,.055)" stroke-width="1"/><polygon points="0,96.0 0.0,72.5 3.7,76.9 7.4,73.6 11.0,71.5 14.7,68.2 18.4,66.6 22.1,70.9 25.8,70.3 29.5,69.8 33.1,68.9 36.8,72.9 40.5,75.6 44.2,79.2 47.9,78.6 51.5,75.3 55.2,75.6 58.9,74.9 62.6,71.2 66.3,69.9 70.0,72.7 73.6,71.8 77.3,70.7 81.0,74.4 84.7,71.6 88.4,68.6 92.1,73.4 95.7,71.2 99.4,72.3 103.1,69.3 106.8,67.3 110.5,71.2 114.1,68.7 117.8,65.8 121.5,66.1 125.2,67.3 128.9,70.1 132.6,71.1 136.2,73.0 139.9,75.1 143.6,71.2 147.3,68.3 151.0,69.0 154.6,66.6 158.3,67.5 162.0,67.8 165.7,71.6 169.4,73.4 173.1,69.9 176.7,70.5 180.4,72.7 184.1,70.6 187.8,72.1 191.5,70.3 195.1,71.6 198.8,68.1 202.5,65.7 206.2,67.8 209.9,70.8 213.6,72.5 217.2,69.3 220.9,69.5 224.6,66.1 228.3,64.5 232.0,67.5 235.6,70.3 239.3,67.4 243.0,70.4 246.7,75.1 250.4,77.9 254.1,77.3 257.7,79.4 261.4,81.7 265.1,77.2 268.8,79.3 272.5,76.8 276.2,78.1 279.8,76.3 283.5,74.8 287.2,78.8 290.9,80.9 294.6,83.6 298.2,70.1 301.9,56.9 305.6,46.5 309.3,37.8 313.0,30.4 316.7,24.0 320.3,18.5 324.0,14.0 327.7,10.3 331.4,7.5 335.1,5.5 338.7,4.2 342.4,3.8 346.1,4.2 349.8,5.5 353.5,7.5 357.2,10.3 360.8,14.0 364.5,18.5 368.2,24.0 371.9,27.5 375.6,31.9 379.2,38.4 382.9,39.5 386.6,42.9 390.3,48.7 394.0,52.4 397.7,51.6 401.3,51.9 405.0,54.9 408.7,53.9 412.4,55.2 416.1,54.8 419.7,59.1 423.4,59.9 427.1,63.4 430.8,66.0 434.5,67.2 438.2,69.3 441.8,73.8 445.5,71.5 449.2,75.9 452.9,78.1 456.6,80.0 460.3,79.1 463.9,78.6 467.6,78.1 471.3,78.7 475.0,80.8 478.7,77.0 482.3,75.5 486.0,73.1 489.7,71.1 493.4,71.3 497.1,72.2 500.8,70.9 504.4,68.6 508.1,67.7 511.8,67.9 515.5,67.1 519.2,68.6 522.8,65.9 526.5,65.4 530.2,63.0 533.9,60.8 537.6,59.2 541.3,57.5 544.9,58.0 548.6,57.7 552.3,57.6 556.0,57.5 559.7,58.2 563.3,58.8 567.0,63.2 570.7,64.9 574.4,69.6 578.1,69.3 581.8,66.0 585.4,69.9 589.1,67.9 592.8,72.2 596.5,68.7 600.2,66.8 603.8,64.0 607.5,66.3 611.2,66.8 614.9,67.3 618.6,71.7 622.3,72.9 625.9,72.9 629.6,75.8 633.3,78.2 637.0,80.0 640.7,76.7 644.4,79.6 648.0,82.1 651.7,82.5 655.4,82.1 659.1,82.6 662.8,84.7 666.4,86.7 670.1,84.1 673.8,85.1 677.5,80.6 681.2,77.7 684.9,78.7 688.5,80.3 692.2,83.3 695.9,85.8 699.6,85.5 703.3,85.3 706.9,81.5 710.6,84.3 714.3,86.0 718.0,86.2 721.7,85.9 725.4,81.9 729.0,76.9 732.7,72.7 736.4,73.3 740.1,76.6 743.8,76.7 747.4,76.7 751.1,74.1 754.8,73.1 758.5,75.1 762.2,77.8 765.9,81.0 769.5,78.0 773.2,75.1 776.9,78.6 780.6,81.2 784.3,78.7 787.9,79.5 791.6,81.3 795.3,83.3 799.0,78.4 802.7,75.2 806.4,76.0 810.0,78.4 813.7,74.2 817.4,73.4 821.1,73.2 824.8,72.1 828.5,69.2 832.1,72.8 835.8,75.4 839.5,76.6 843.2,76.6 846.9,78.1 850.5,78.2 854.2,76.2 857.9,77.9 861.6,77.1 865.3,79.2 869.0,77.0 872.6,74.1 876.3,72.4 880.0,74.7 880.0,96.0" fill="var(--gpu)" opacity=".13"/><polyline points="0.0,72.5 3.7,76.9 7.4,73.6 11.0,71.5 14.7,68.2 18.4,66.6 22.1,70.9 25.8,70.3 29.5,69.8 33.1,68.9 36.8,72.9 40.5,75.6 44.2,79.2 47.9,78.6 51.5,75.3 55.2,75.6 58.9,74.9 62.6,71.2 66.3,69.9 70.0,72.7 73.6,71.8 77.3,70.7 81.0,74.4 84.7,71.6 88.4,68.6 92.1,73.4 95.7,71.2 99.4,72.3 103.1,69.3 106.8,67.3 110.5,71.2 114.1,68.7 117.8,65.8 121.5,66.1 125.2,67.3 128.9,70.1 132.6,71.1 136.2,73.0 139.9,75.1 143.6,71.2 147.3,68.3 151.0,69.0 154.6,66.6 158.3,67.5 162.0,67.8 165.7,71.6 169.4,73.4 173.1,69.9 176.7,70.5 180.4,72.7 184.1,70.6 187.8,72.1 191.5,70.3 195.1,71.6 198.8,68.1 202.5,65.7 206.2,67.8 209.9,70.8 213.6,72.5 217.2,69.3 220.9,69.5 224.6,66.1 228.3,64.5 232.0,67.5 235.6,70.3 239.3,67.4 243.0,70.4 246.7,75.1 250.4,77.9 254.1,77.3 257.7,79.4 261.4,81.7 265.1,77.2 268.8,79.3 272.5,76.8 276.2,78.1 279.8,76.3 283.5,74.8 287.2,78.8 290.9,80.9 294.6,83.6 298.2,70.1 301.9,56.9 305.6,46.5 309.3,37.8 313.0,30.4 316.7,24.0 320.3,18.5 324.0,14.0 327.7,10.3 331.4,7.5 335.1,5.5 338.7,4.2 342.4,3.8 346.1,4.2 349.8,5.5 353.5,7.5 357.2,10.3 360.8,14.0 364.5,18.5 368.2,24.0 371.9,27.5 375.6,31.9 379.2,38.4 382.9,39.5 386.6,42.9 390.3,48.7 394.0,52.4 397.7,51.6 401.3,51.9 405.0,54.9 408.7,53.9 412.4,55.2 416.1,54.8 419.7,59.1 423.4,59.9 427.1,63.4 430.8,66.0 434.5,67.2 438.2,69.3 441.8,73.8 445.5,71.5 449.2,75.9 452.9,78.1 456.6,80.0 460.3,79.1 463.9,78.6 467.6,78.1 471.3,78.7 475.0,80.8 478.7,77.0 482.3,75.5 486.0,73.1 489.7,71.1 493.4,71.3 497.1,72.2 500.8,70.9 504.4,68.6 508.1,67.7 511.8,67.9 515.5,67.1 519.2,68.6 522.8,65.9 526.5,65.4 530.2,63.0 533.9,60.8 537.6,59.2 541.3,57.5 544.9,58.0 548.6,57.7 552.3,57.6 556.0,57.5 559.7,58.2 563.3,58.8 567.0,63.2 570.7,64.9 574.4,69.6 578.1,69.3 581.8,66.0 585.4,69.9 589.1,67.9 592.8,72.2 596.5,68.7 600.2,66.8 603.8,64.0 607.5,66.3 611.2,66.8 614.9,67.3 618.6,71.7 622.3,72.9 625.9,72.9 629.6,75.8 633.3,78.2 637.0,80.0 640.7,76.7 644.4,79.6 648.0,82.1 651.7,82.5 655.4,82.1 659.1,82.6 662.8,84.7 666.4,86.7 670.1,84.1 673.8,85.1 677.5,80.6 681.2,77.7 684.9,78.7 688.5,80.3 692.2,83.3 695.9,85.8 699.6,85.5 703.3,85.3 706.9,81.5 710.6,84.3 714.3,86.0 718.0,86.2 721.7,85.9 725.4,81.9 729.0,76.9 732.7,72.7 736.4,73.3 740.1,76.6 743.8,76.7 747.4,76.7 751.1,74.1 754.8,73.1 758.5,75.1 762.2,77.8 765.9,81.0 769.5,78.0 773.2,75.1 776.9,78.6 780.6,81.2 784.3,78.7 787.9,79.5 791.6,81.3 795.3,83.3 799.0,78.4 802.7,75.2 806.4,76.0 810.0,78.4 813.7,74.2 817.4,73.4 821.1,73.2 824.8,72.1 828.5,69.2 832.1,72.8 835.8,75.4 839.5,76.6 843.2,76.6 846.9,78.1 850.5,78.2 854.2,76.2 857.9,77.9 861.6,77.1 865.3,79.2 869.0,77.0 872.6,74.1 876.3,72.4 880.0,74.7" fill="none" stroke="var(--gpu)" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round"/><rect x="301.9" y="0" width="176.7" height="96" fill="rgba(251,191,36,.10)"/><line x1="301.9" y1="0" x2="301.9" y2="96" stroke="var(--page-accent)" stroke-width="1.2"/><line x1="478.7" y1="0" x2="478.7" y2="96" stroke="var(--page-accent)" stroke-width="1.2"/></svg>
+    </div>
+  </div>
+  <div class="snap-row">
+    <div class="snap-sum"><svg class="snap-chev" viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4,6 L8,10 L12,6"/></svg><span class="snap-dot" style="background:var(--disk)"></span><span class="snap-name">SSD 990 PRO</span><span class="snap-stats"><b>평균 52.3</b>% <span>최소 0.0</span> <span>최대 88.0</span></span><span class="snap-scope">선택 구간</span></div>
+    <div class="snap-plot">
+      <div class="sw-gutter"><span>100</span><span>50</span><span>0</span></div>
+      <svg class="snap-chart" viewBox="0 0 880 96" preserveAspectRatio="none" role="img" aria-label="SSD 990 PRO 시계열, 선택 구간 평균 52.3%"><rect x="0" y="0" width="880" height="96" fill="rgba(255,255,255,.015)"/><line x1="0" y1="24.0" x2="880" y2="24.0" stroke="rgba(255,255,255,.045)" stroke-width="1"/><line x1="0" y1="48.0" x2="880" y2="48.0" stroke="rgba(255,255,255,.085)" stroke-width="1"/><line x1="0" y1="72.0" x2="880" y2="72.0" stroke="rgba(255,255,255,.045)" stroke-width="1"/><line x1="51.8" y1="0" x2="51.8" y2="96" stroke="rgba(255,255,255,.055)" stroke-width="1"/><line x1="227.8" y1="0" x2="227.8" y2="96" stroke="rgba(255,255,255,.055)" stroke-width="1"/><line x1="403.8" y1="0" x2="403.8" y2="96" stroke="rgba(255,255,255,.055)" stroke-width="1"/><line x1="579.8" y1="0" x2="579.8" y2="96" stroke="rgba(255,255,255,.055)" stroke-width="1"/><line x1="755.8" y1="0" x2="755.8" y2="96" stroke="rgba(255,255,255,.055)" stroke-width="1"/><polygon points="0,96.0 0.0,93.8 3.7,89.1 7.4,79.4 11.0,82.1 14.7,77.0 18.4,77.9 22.1,81.6 25.8,81.2 29.5,89.9 33.1,77.7 36.8,85.0 40.5,86.8 44.2,91.0 47.9,83.9 51.5,90.0 55.2,77.9 58.9,82.9 62.6,92.4 66.3,82.9 70.0,77.6 73.6,82.2 77.3,73.7 81.0,65.9 84.7,62.1 88.4,74.1 92.1,69.3 95.7,65.8 99.4,66.1 103.1,71.1 106.8,78.2 110.5,84.1 114.1,87.5 117.8,93.8 121.5,85.3 125.2,86.0 128.9,75.9 132.6,71.8 136.2,77.1 139.9,72.4 143.6,67.8 147.3,79.0 151.0,78.7 154.6,79.9 158.3,71.4 162.0,81.4 165.7,72.2 169.4,68.9 173.1,65.1 176.7,67.7 180.4,65.8 184.1,57.6 187.8,55.5 191.5,69.6 195.1,70.0 198.8,69.4 202.5,77.3 206.2,84.7 209.9,93.1 213.6,80.8 217.2,89.6 220.9,96.0 224.6,96.0 228.3,89.5 232.0,96.0 235.6,96.0 239.3,96.0 243.0,86.5 246.7,82.5 250.4,79.0 254.1,74.6 257.7,85.0 261.4,96.0 265.1,92.3 268.8,85.2 272.5,76.2 276.2,73.7 279.8,68.8 283.5,70.4 287.2,72.8 290.9,69.8 294.6,67.1 298.2,71.8 301.9,78.6 305.6,75.3 309.3,84.7 313.0,77.8 316.7,78.3 320.3,87.1 324.0,93.0 327.7,96.0 331.4,82.9 335.1,81.0 338.7,70.9 342.4,62.8 346.1,60.2 349.8,50.6 353.5,42.7 357.2,35.8 360.8,30.0 364.5,25.0 368.2,20.8 371.9,17.5 375.6,14.9 379.2,13.0 382.9,11.9 386.6,11.5 390.3,11.9 394.0,13.0 397.7,14.9 401.3,17.5 405.0,20.8 408.7,25.0 412.4,30.0 416.1,29.0 419.7,30.6 423.4,31.1 427.1,37.9 430.8,34.0 434.5,34.6 438.2,33.5 441.8,43.2 445.5,43.4 449.2,50.1 452.9,56.0 456.6,50.2 460.3,58.2 463.9,50.8 467.6,52.4 471.3,56.3 475.0,71.4 478.7,82.7 482.3,80.3 486.0,69.8 489.7,64.8 493.4,72.8 497.1,83.7 500.8,76.3 504.4,87.5 508.1,96.0 511.8,96.0 515.5,87.1 519.2,83.3 522.8,76.5 526.5,69.8 530.2,65.9 533.9,68.6 537.6,62.2 541.3,67.8 544.9,66.3 548.6,67.8 552.3,79.3 556.0,76.8 559.7,87.7 563.3,90.1 567.0,96.0 570.7,84.7 574.4,88.0 578.1,95.1 581.8,96.0 585.4,96.0 589.1,96.0 592.8,96.0 596.5,85.3 600.2,81.7 603.8,84.8 607.5,96.0 611.2,96.0 614.9,88.6 618.6,92.4 622.3,86.3 625.9,91.7 629.6,92.5 633.3,83.3 637.0,88.4 640.7,96.0 644.4,96.0 648.0,87.7 651.7,89.6 655.4,92.0 659.1,83.4 662.8,77.3 666.4,73.6 670.1,67.3 673.8,58.9 677.5,73.4 681.2,82.5 684.9,78.3 688.5,85.4 692.2,96.0 695.9,89.0 699.6,96.0 703.3,96.0 706.9,96.0 710.6,92.5 714.3,96.0 718.0,96.0 721.7,85.3 725.4,86.8 729.0,83.5 732.7,81.2 736.4,93.1 740.1,88.2 743.8,88.5 747.4,82.9 751.1,90.6 754.8,96.0 758.5,87.8 762.2,77.9 765.9,84.3 769.5,76.6 773.2,76.9 776.9,75.7 780.6,68.0 784.3,76.4 787.9,74.6 791.6,70.8 795.3,61.5 799.0,61.0 802.7,59.3 806.4,62.7 810.0,54.2 813.7,66.0 817.4,63.0 821.1,75.0 824.8,86.9 828.5,96.0 832.1,96.0 835.8,90.0 839.5,86.1 843.2,88.3 846.9,81.6 850.5,77.7 854.2,81.1 857.9,76.9 861.6,77.3 865.3,69.0 869.0,81.4 872.6,85.6 876.3,84.3 880.0,89.2 880.0,96.0" fill="var(--disk)" opacity=".13"/><polyline points="0.0,93.8 3.7,89.1 7.4,79.4 11.0,82.1 14.7,77.0 18.4,77.9 22.1,81.6 25.8,81.2 29.5,89.9 33.1,77.7 36.8,85.0 40.5,86.8 44.2,91.0 47.9,83.9 51.5,90.0 55.2,77.9 58.9,82.9 62.6,92.4 66.3,82.9 70.0,77.6 73.6,82.2 77.3,73.7 81.0,65.9 84.7,62.1 88.4,74.1 92.1,69.3 95.7,65.8 99.4,66.1 103.1,71.1 106.8,78.2 110.5,84.1 114.1,87.5 117.8,93.8 121.5,85.3 125.2,86.0 128.9,75.9 132.6,71.8 136.2,77.1 139.9,72.4 143.6,67.8 147.3,79.0 151.0,78.7 154.6,79.9 158.3,71.4 162.0,81.4 165.7,72.2 169.4,68.9 173.1,65.1 176.7,67.7 180.4,65.8 184.1,57.6 187.8,55.5 191.5,69.6 195.1,70.0 198.8,69.4 202.5,77.3 206.2,84.7 209.9,93.1 213.6,80.8 217.2,89.6 220.9,96.0 224.6,96.0 228.3,89.5 232.0,96.0 235.6,96.0 239.3,96.0 243.0,86.5 246.7,82.5 250.4,79.0 254.1,74.6 257.7,85.0 261.4,96.0 265.1,92.3 268.8,85.2 272.5,76.2 276.2,73.7 279.8,68.8 283.5,70.4 287.2,72.8 290.9,69.8 294.6,67.1 298.2,71.8 301.9,78.6 305.6,75.3 309.3,84.7 313.0,77.8 316.7,78.3 320.3,87.1 324.0,93.0 327.7,96.0 331.4,82.9 335.1,81.0 338.7,70.9 342.4,62.8 346.1,60.2 349.8,50.6 353.5,42.7 357.2,35.8 360.8,30.0 364.5,25.0 368.2,20.8 371.9,17.5 375.6,14.9 379.2,13.0 382.9,11.9 386.6,11.5 390.3,11.9 394.0,13.0 397.7,14.9 401.3,17.5 405.0,20.8 408.7,25.0 412.4,30.0 416.1,29.0 419.7,30.6 423.4,31.1 427.1,37.9 430.8,34.0 434.5,34.6 438.2,33.5 441.8,43.2 445.5,43.4 449.2,50.1 452.9,56.0 456.6,50.2 460.3,58.2 463.9,50.8 467.6,52.4 471.3,56.3 475.0,71.4 478.7,82.7 482.3,80.3 486.0,69.8 489.7,64.8 493.4,72.8 497.1,83.7 500.8,76.3 504.4,87.5 508.1,96.0 511.8,96.0 515.5,87.1 519.2,83.3 522.8,76.5 526.5,69.8 530.2,65.9 533.9,68.6 537.6,62.2 541.3,67.8 544.9,66.3 548.6,67.8 552.3,79.3 556.0,76.8 559.7,87.7 563.3,90.1 567.0,96.0 570.7,84.7 574.4,88.0 578.1,95.1 581.8,96.0 585.4,96.0 589.1,96.0 592.8,96.0 596.5,85.3 600.2,81.7 603.8,84.8 607.5,96.0 611.2,96.0 614.9,88.6 618.6,92.4 622.3,86.3 625.9,91.7 629.6,92.5 633.3,83.3 637.0,88.4 640.7,96.0 644.4,96.0 648.0,87.7 651.7,89.6 655.4,92.0 659.1,83.4 662.8,77.3 666.4,73.6 670.1,67.3 673.8,58.9 677.5,73.4 681.2,82.5 684.9,78.3 688.5,85.4 692.2,96.0 695.9,89.0 699.6,96.0 703.3,96.0 706.9,96.0 710.6,92.5 714.3,96.0 718.0,96.0 721.7,85.3 725.4,86.8 729.0,83.5 732.7,81.2 736.4,93.1 740.1,88.2 743.8,88.5 747.4,82.9 751.1,90.6 754.8,96.0 758.5,87.8 762.2,77.9 765.9,84.3 769.5,76.6 773.2,76.9 776.9,75.7 780.6,68.0 784.3,76.4 787.9,74.6 791.6,70.8 795.3,61.5 799.0,61.0 802.7,59.3 806.4,62.7 810.0,54.2 813.7,66.0 817.4,63.0 821.1,75.0 824.8,86.9 828.5,96.0 832.1,96.0 835.8,90.0 839.5,86.1 843.2,88.3 846.9,81.6 850.5,77.7 854.2,81.1 857.9,76.9 861.6,77.3 865.3,69.0 869.0,81.4 872.6,85.6 876.3,84.3 880.0,89.2" fill="none" stroke="var(--disk)" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round"/><rect x="301.9" y="0" width="176.7" height="96" fill="rgba(251,191,36,.10)"/><line x1="301.9" y1="0" x2="301.9" y2="96" stroke="var(--page-accent)" stroke-width="1.2"/><line x1="478.7" y1="0" x2="478.7" y2="96" stroke="var(--page-accent)" stroke-width="1.2"/></svg>
+    </div>
+  </div>
+  <div class="snap-row collapsed">
+    <div class="snap-sum"><svg class="snap-chev" viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4,6 L8,10 L12,6"/></svg><span class="snap-dot" style="background:var(--net)"></span><span class="snap-name">이더넷 Realtek 2.5GbE</span><span class="snap-stats"><b>평균 36.9</b>% <span>최소 11.1</span> <span>최대 62.0</span></span><span class="snap-scope">선택 구간</span></div>
+  </div>
+  </div>
+  <div class="sw-ruler"><span class="track"><span style="left:5.889%">14:33</span><span style="left:25.889%">14:36</span><span style="left:45.889%">14:39</span><span style="left:65.889%">14:42</span><span style="left:85.889%">14:45</span></span></div>
+  <div class="sw-axis">
+    <span>14:32:07</span>
+    <span class="sw-track"><span class="sw-thumb"></span></span>
+    <span>14:47:07</span>
+    <span class="sw-zoom"><i title="축소"><svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="7" cy="7" r="4"/><path d="M10,10 L13.6,13.6"/><path d="M5,7 H9"/></svg></i>2.4&times;<i title="확대"><svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="7" cy="7" r="4"/><path d="M10,10 L13.6,13.6"/><path d="M5,7 H9"/><path d="M7,5 V9"/></svg></i></span>
+  </div>
+</div>
+<p style="font-size:12.5px;color:var(--page-dim);text-align:center;margin:-8px 0 20px">
+  선택 구간을 드래그한 상태 — 모든 차트에 동시에 걸린다. 맨 아래 이더넷은 <b>접힌 줄</b>이고,
+  차트는 사라졌어도 <b>숫자는 선택 구간을 따라 계속 바뀐다</b>
+</p>
+
+<h3>버튼은 전부 아이콘이다</h3>
+<p>기존 규칙 그대로 만들었다 — <b>16px 그리드 · 1.7px 스트로크 · 라운드 캡 · 획 4개 이하</b>(§03).
+경로 데이터는 PROJECT.md §8.8 에 적어 두었다.</p>
+<div class="iconrow">
+  <div class="iconcell"><div style="color:var(--page-text);margin-bottom:8px"><svg viewBox="0 0 16 16" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="5" width="12" height="8" rx="2"/><path d="M5.8,5 L6.6,3.2 H9.4 L10.2,5"/><circle cx="8" cy="9" r="2.5"/></svg></div><div style="font-family:var(--mono);font-size:11px;color:var(--page-accent)">Snapshot</div><div style="font-size:12px;margin-top:3px">스냅샷 창 열기</div><div style="font-size:11px;color:var(--page-dim);margin-top:2px">메인 창 제목 표시줄</div></div>
+  <div class="iconcell"><div style="color:var(--page-text);margin-bottom:8px"><svg viewBox="0 0 16 16" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.4,3.5 V12.5 M13.6,3.5 V12.5"/><path d="M6.2,8 H3.2 M5,6.2 L3.1,8 L5,9.8"/><path d="M9.8,8 H12.8 M11,6.2 L12.9,8 L11,9.8"/></svg></div><div style="font-family:var(--mono);font-size:11px;color:var(--page-accent)">FitWidth</div><div style="font-size:12px;margin-top:3px">전체</div><div style="font-size:11px;color:var(--page-dim);margin-top:2px">크롭 해제 + 폭 맞춤</div></div>
+  <div class="iconcell"><div style="color:var(--page-text);margin-bottom:8px"><svg viewBox="0 0 16 16" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5,1.8 V11.5 H14.2"/><path d="M1.8,4.5 H11.5 V14.2"/></svg></div><div style="font-family:var(--mono);font-size:11px;color:var(--page-accent)">Crop</div><div style="font-size:12px;margin-top:3px">크롭</div><div style="font-size:11px;color:var(--page-dim);margin-top:2px">선택 구간만 남긴다</div></div>
+  <div class="iconcell"><div style="color:var(--page-text);margin-bottom:8px"><svg viewBox="0 0 16 16" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.6,6.4 H9.6 A3.8,3.8 0 0 1 9.6,14 H6.4"/><path d="M5.6,3.4 L2.6,6.4 L5.6,9.4"/></svg></div><div style="font-family:var(--mono);font-size:11px;color:var(--page-accent)">Undo</div><div style="font-size:12px;margin-top:3px">되돌리기</div><div style="font-size:11px;color:var(--page-dim);margin-top:2px">직전 크롭 취소</div></div>
+  <div class="iconcell"><div style="color:var(--page-text);margin-bottom:8px"><svg viewBox="0 0 16 16" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8,2.6 V10.4"/><path d="M4.8,7.2 L8,10.4 L11.2,7.2"/><path d="M2.8,12.6 H13.2"/></svg></div><div style="font-family:var(--mono);font-size:11px;color:var(--page-accent)">Export</div><div style="font-size:12px;margin-top:3px">내보내기</div><div style="font-size:11px;color:var(--page-dim);margin-top:2px">CSV 저장</div></div>
+  <div class="iconcell"><div style="color:var(--page-text);margin-bottom:8px"><svg viewBox="0 0 16 16" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="7" cy="7" r="4"/><path d="M10,10 L13.6,13.6"/><path d="M5,7 H9"/><path d="M7,5 V9"/></svg></div><div style="font-family:var(--mono);font-size:11px;color:var(--page-accent)">ZoomIn</div><div style="font-size:12px;margin-top:3px">확대 · 축소</div><div style="font-size:11px;color:var(--page-dim);margin-top:2px"><code>Ctrl</code>+휠 · 가로만</div></div>
+</div>
+
+<div class="note"><b><code>Undo</code> 는 <code>Reset</code>(⟲)과 실루엣부터 다르다.</b>
+둘 다 우리말로는 "되돌린다"로 묶이지만 하나는 통계 기준점을 옮기는 것이고 하나는 크롭을 취소하는 것이다.
+<code>Reset</code> 은 <b>닫힌 원호</b>, <code>Undo</code> 는 <b>열린 갈고리</b>로 가른다.</div>
+
+<h3>스냅샷 버튼은 ⟲ 바로 옆이다</h3>
+<p>더블클릭이 아니라 버튼인 이유는 둘이다. <b>더블클릭은 발견되지 않고</b>, 차트 위 더블클릭은
+이미 시간 창 전환(60s → 180s → 600s)이 쓰고 있다. 한 제스처에 두 기능을 얹으면 어느 쪽도 확실하지 않다.</p>
+<div class="snapwin" style="max-width:340px">
+  <div class="sw-title" style="height:38px;gap:7px">
+    <span style="width:18px;height:18px;border-radius:5px;background:linear-gradient(135deg,#FBBF24,#F472B6);flex:0 0 18px"></span>
+    <span class="sw-ico" title="통계 리셋" style="width:26px;height:26px;border-radius:8px"><svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13,8 A5,5 0 1 1 11.4,4.3 M13,2 V5 H10"/></svg></span>
+    <span class="sw-ico" title="스냅샷 창 열기" style="width:26px;height:26px;border-radius:8px"><svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="5" width="12" height="8" rx="2"/><path d="M5.8,5 L6.6,3.2 H9.4 L10.2,5"/><circle cx="8" cy="9" r="2.5"/></svg></span>
+    <span class="sw-time" style="margin-left:6px">04:12</span>
+    <span class="sw-btns"><span>&#9679;</span><span>&#9680;</span><span>&#8211;</span><span>&#10005;</span></span>
+  </div>
+</div>
+<p style="font-size:12.5px;color:var(--page-dim);text-align:center;margin:-8px 0 20px">
+  ⟲ 는 측정 구간의 <b>시작점을 옮기고</b>, 스냅샷은 그 구간을 <b>통째로 떠낸다</b> — 같은 일의 두 면이라 같은 자리에 둔다</p>
+
+<h3>요약은 차트마다 그 머리에 붙인다</h3>
+<p>장치별 요약 카드를 창 맨 위에 몰아 두는 안도 있었다. 차트가 3개일 때는 그쪽이 깔끔하다.
+하지만 GPU 2장·디스크 2개·NIC 2개가 붙으면 차트가 8개가 되고, <b>스크롤한 순간 숫자와 그림이 갈라진다.</b>
+숫자는 그것을 설명하는 그림 옆에 있어야 한다.</p>
+
+<div class="note">요약이 말하는 범위는 <b>선택 구간 &gt; 크롭 구간 &gt; 표시 구간</b> 순으로 좁은 쪽이 이긴다.
+지금 무엇을 재고 있는지 헷갈리지 않도록 오른쪽 끝에 범위 배지를 단다.</div>
+
+<h3>선택 · 크롭 · 확대는 서로 다른 일이다</h3>
+<table>
+  <tr><th>동작</th><th>바뀌는 것</th><th>바뀌지 않는 것</th></tr>
+  <tr><td><b>선택</b> — 차트 위 드래그</td><td>요약 띠의 숫자</td><td>보이는 범위, 내보낼 범위</td></tr>
+  <tr><td><b>크롭</b> — 선택 구간으로</td><td>분석 도메인 — 요약과 <b>내보내기 범위</b></td><td>원본 배열. 경계만 좁히므로 <code>되돌리기</code>·<code>전체</code>로 돌아온다</td></tr>
+  <tr><td><b>확대</b> — <code>Ctrl</code>+휠</td><td>보이는 범위(가로만)</td><td>내보낼 범위. <b>보이는 것이 아니라 정한 것을 낸다</b></td></tr>
+</table>
+
+<div class="note warn">세로 축은 확대하지 않는다. 퍼센트는 0~100 고정, GPU 메모리는 용량 기준(§12)이라
+세로로 늘이는 순간 그 규칙이 무너진다. 같은 자리의 같은 높이가 늘 같은 값이어야 한다.</div>
+
+<h3>제스처</h3>
+<table>
+  <tr><th>동작</th><th>결과</th><th>메모</th></tr>
+  <tr><td><code>Ctrl</code> + 휠</td><td><b>확대 · 축소</b></td><td>커서가 가리키는 시각을 붙든 채 배율만 바뀐다. 가로만. 툴바 우하단 <code>ZoomOut</code>/<code>ZoomIn</code> 버튼이 같은 일을 한다</td></tr>
+  <tr><td>휠</td><td>세로 스크롤</td><td>장치 목록을 훑는다</td></tr>
+  <tr><td><code>Shift</code> + 휠</td><td>가로 스크롤</td><td>확대한 상태에서 시간을 따라 이동. 스크롤바는 창 전체에 하나뿐이라 모든 차트가 함께 움직인다</td></tr>
+  <tr><td>차트 위 드래그</td><td>구간 선택</td><td>모든 차트에 동시에 걸린다</td></tr>
+  <tr><td>요약 띠 클릭</td><td>그 장치 접기 · 펴기</td><td>메인 창 카드 헤더와 같은 제스처</td></tr>
+  <tr><td><code>Esc</code></td><td>선택 해제</td><td>요약이 표시 구간 값으로 돌아온다</td></tr>
+</table>
+<div class="note">휠 세 갈래가 겹치지 않는다 — <b>맨 휠은 세로, <code>Shift</code> 는 가로, <code>Ctrl</code> 은 시간 폭</b>.
+브라우저·편집기·지도가 전부 쓰는 배치라 발명한 것이 아니다.</div>
+
+<h3>메인 창과 휠 배치를 맞춘다</h3>
+<table>
+  <tr><th>휠</th><th>메인 창</th><th>스냅샷 창</th></tr>
+  <tr><td>맨 휠</td><td>— (스크롤이 없는 창)</td><td>세로 스크롤</td></tr>
+  <tr><td><code>Shift</code> + 휠</td><td>창 불투명도 60~100%</td><td>가로 스크롤</td></tr>
+  <tr><td><code>Ctrl</code> + 휠</td><td><b>시간 폭</b> — 30·60·180·600·900초 사다리</td><td><b>시간 폭</b> — 연속 확대 (1× ~ 샘플당 4px)</td></tr>
+</table>
+<div class="note"><b><code>Ctrl</code>+휠만 두 창에서 같은 뜻이다</b> — 둘 다 "얼마나 긴 시간을 볼 것인가"다.
+나머지 둘은 <b>스크롤이 있는 창과 없는 창</b>의 차이로 갈리므로, 한쪽을 익혀도 다른 쪽에서 헛돌지 않는다.</div>
+<div class="note">메인 창은 <b>차트 더블클릭이 표준 60초로 되돌린다</b>. <code>Ctrl</code>+휠로 얼마든지
+헤매도 돌아올 문이 하나 있다는 뜻이다. 초안의 <code>60 → 180 → 600</code> 순환은 원하는 곳에 닿으려면
+몇 번 눌러야 하는지 세야 했고, 지나치면 한 바퀴를 더 돌아야 했으며, 무엇보다 돌아올 문이 없었다.</div>
+
+<h3>통계는 실측 표본만 센다</h3>
+<p>Slow 티어 지표는 Fast 틱마다 직전 값이 다시 기록된다 — 시간 축을 맞추기 위해 일부러 그렇게 한다.
+그 유지값을 통계에 넣으면 표본 수가 주기 비율만큼 부풀고, 편차 0인 반복이 표준편차를 끌어내려
+<b>실제보다 안정적으로 보인다.</b> 구간 안에 실측 표본이 하나도 없으면 <code>0</code> 이 아니라
+<code>&mdash;</code> 로 적는다.</p>
+
+<h3>내보내기는 CSV 하나뿐</h3>
+<p><code>.xlsx</code> 는 쓰기 라이브러리가 필요하다. 이 프로젝트는 <b>차트 라이브러리조차 쓰지 않는다</b> —
+비교용 표 하나를 위해 그 선을 넘을 이유가 없다. CSV 는 엑셀이 그대로 연다.</p>
+<table>
+  <tr><th>항목</th><th>결정</th><th>이유</th></tr>
+  <tr><td>인코딩</td><td>UTF-8 <b>BOM 포함</b></td><td>없으면 엑셀이 한글 헤더를 깨뜨린다</td></tr>
+  <tr><td>행</td><td>한 틱 = 한 행</td><td>모든 지표가 같은 틱 그리드에 기록되므로 리샘플링이 필요 없다</td></tr>
+  <tr><td>실측 아닌 샘플</td><td><b>빈 칸</b></td><td>유지값을 채워 내면 엑셀에서 평균을 내는 순간 틀린다</td></tr>
+  <tr><td>열 이름</td><td><code>장치명 / 지표 / 단위</code></td><td>여러 파일을 나란히 놓고 비교할 때 열 이름만으로 갈려야 한다</td></tr>
+</table>
+
+<div class="note">창은 <b>모달리스</b>다. 테스트 A·B 를 나란히 놓고 비교하는 것이 이 기능의 주 용도라
+여러 개를 열 수 있어야 한다. 그래서 타이틀이 <b>데이터 시작 시각</b>이다 — 창이 여러 개일 때
+무엇이 언제 남긴 것인지는 타이틀에서만 갈린다.</div>
+
+<h2 data-n="20">열린 UX 질문</h2>
 <ol>
   <li>제조사 글리프의 <b>식별 정확도 검증</b> — 16px에서 NVIDIA/AMD/Intel이 실제로 구분되는지. 실패하면 배지에 이니셜(N/A/I)을 넣는 안으로 후퇴</li>
   <li>VPN 이중 계상을 <b>차트에서도</b> 표현할지 — 예: VPN 카드의 영역을 하위 인터페이스 카드에 옅은 오버레이로 겹쳐 그리기. 정보는 늘지만 복잡도가 크게 는다</li>
