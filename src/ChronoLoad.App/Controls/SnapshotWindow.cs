@@ -297,9 +297,13 @@ public sealed class SnapshotWindow : Window
         _rangeStart.Text = Local(_viewStart).ToString("HH:mm:ss");
         _rangeEnd.Text = Local(Math.Min(_viewStart + _viewCount, _snapshot.Count) - 1).ToString("HH:mm:ss");
 
-        // 집은 순간의 시각은 한 곳에만 적는다. 행마다 되풀이하면 같은 값이 여덟 번 보인다.
-        _instant.Text = scrub is { } at ? Local(at).ToString("HH:mm:ss.fff") : "";
-        _instant.Visibility = scrub is null ? Visibility.Collapsed : Visibility.Visible;
+        // 시각은 한 곳에만 적는다. 행마다 되풀이하면 같은 값이 여덟 번 보인다.
+        // 자리는 하나고, 끈 것이면 구간을 집은 것이면 순간을 적는다 — 둘은 같이 나올 수 없다.
+        _instant.Text = Selection is { } picked
+            ? $"{Local(picked.From):HH:mm:ss} ~ {Local(picked.To - 1):HH:mm:ss} · " +
+              Elapsed(Local(picked.To - 1) - Local(picked.From))
+            : scrub is { } at ? Local(at).ToString("HH:mm:ss.fff") : "";
+        _instant.Visibility = _instant.Text.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
         _zoomText.Text = $"{(double)(to - from) / Math.Max(1, _viewCount):0.#}×";
 
         Enable(_cropButton, Selection is not null);
@@ -498,10 +502,25 @@ public sealed class SnapshotWindow : Window
     private string Duration((int From, int To) range) =>
         Describe(Local(range.To - 1) - Local(range.From));
 
-    internal void BeginSelect(SnapshotChart chart, double x)
+    /// <param name="extend">
+    /// <c>Shift</c> 를 누른 채 눌렀는가. 그러면 <b>이미 잡아 둔 자리를 한 끝으로 삼는다.</b>
+    /// 긴 구간일수록 끝까지 끄는 동안 손이 흔들리고, 한 번 놓치면 처음부터 다시 끌어야 한다 —
+    /// 한 번 찍고 반대쪽을 <c>Shift</c>+클릭하면 길이와 무관하게 두 번이면 끝난다.
+    /// 이미 구간이 잡혀 있으면 끝을 옮긴다(목록·텍스트 선택과 같은 관습이다).
+    /// </param>
+    internal void BeginSelect(SnapshotChart chart, double x, bool extend = false)
     {
+        SelectAt(Clamp(chart.IndexAt(x)), extend);
+
+        // 이어서 끌면 그 끝이 따라온다 — Shift+클릭으로 대강 잡고 끌어서 다듬을 수 있다.
         _dragging = true;
-        _selectA = _selectB = Clamp(chart.IndexAt(x));
+    }
+
+    /// <summary>좌표를 뗀 선택. 렌더 테스트도 이리로 들어온다.</summary>
+    internal void SelectAt(int index, bool extend)
+    {
+        if (extend && _selectA is not null) _selectB = index;
+        else _selectA = _selectB = index;
         Refresh();
     }
 
@@ -538,6 +557,15 @@ public sealed class SnapshotWindow : Window
     }
 
     // ── 작은 조립기 ───────────────────────────────────────────
+
+    /// <summary>
+    /// 끈 구간의 길이. <see cref="Describe"/> 보다 한 자리 더 적는다 — 250ms 로 재는데
+    /// <c>13초</c> 로 뭉개면 무엇을 골랐는지 흐려진다.
+    /// </summary>
+    private static string Elapsed(TimeSpan span) =>
+        span.TotalSeconds < 60 ? $"{span.TotalSeconds:0.0}초"
+        : span.TotalMinutes < 60 ? $"{span.TotalMinutes:0.0}분"
+        : $"{span.TotalHours:0.0}시간";
 
     private static string Describe(TimeSpan span) =>
         span.TotalSeconds < 60 ? $"{span.TotalSeconds:0}초"
@@ -722,7 +750,8 @@ public sealed class SnapshotWindow : Window
             Chart.MouseLeftButtonDown += (_, e) =>
             {
                 Chart.CaptureMouse();
-                window.BeginSelect(Chart, e.GetPosition(Chart).X);
+                window.BeginSelect(Chart, e.GetPosition(Chart).X,
+                                   (Keyboard.Modifiers & ModifierKeys.Shift) != 0);
             };
             Chart.MouseMove += (_, e) =>
             {

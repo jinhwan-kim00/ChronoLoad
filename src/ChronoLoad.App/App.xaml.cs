@@ -307,6 +307,12 @@ public partial class App : Application
 
         CaptureAfter(700, window, stem + "-snapshot.png", () =>
         {
+            // 클릭으로 한 자리를 잡고 Shift+클릭으로 반대쪽을 찍는 경로. 끌기와 결과가 같아야 한다.
+            window.SelectAt((int)(snapshot.Count * 0.20), extend: false);
+            window.SelectAt((int)(snapshot.Count * 0.55), extend: true);
+        });
+        CaptureAfter(1100, window, stem + "-snapshot-shift.png", () =>
+        {
             // 선택과 크롭은 드래그로만 닿는 경로다. 눈으로 확인할 수 있게 한 장 더 담는다.
             window.Preselect((int)(snapshot.Count * 0.35), (int)(snapshot.Count * 0.62));
             CaptureAfter(400, window, stem + "-snapshot-selected.png", () =>
