@@ -56,8 +56,13 @@ public sealed class SnapshotWindow : Window
     private int? _selectA, _selectB;
     private bool _dragging;
 
-    /// <summary>닫히는 시점에 이 창이 활성이었는가. 그때만 소유 창으로 활성을 돌려준다.</summary>
+    /// <summary>닫히는 시점에 이 창이 활성이었는가. 그때만 메인 창으로 활성을 돌려준다.</summary>
     private bool _activeWhenClosing;
+
+    /// <summary>
+    /// 띄운 창. <see cref="Window.Owner"/> 는 첫 자리를 잡은 뒤 놓으므로 여기에 따로 들고 있다.
+    /// </summary>
+    private readonly Window _parent;
 
     public SnapshotWindow(Window owner, MetricSnapshot snapshot, long gapThresholdTicks)
     {
@@ -68,7 +73,16 @@ public sealed class SnapshotWindow : Window
 
         var palette = _palette = ThemeService.Instance.Palette;
 
+        // 첫 자리를 메인 창 가운데로 잡기 위해서만 소유자를 건다. 걸어 둔 채로 두면
+        // <b>Win32 가 소유된 창을 늘 소유자 위에 둔다</b> — 메인 창을 눌러도 올라오지 않는다.
+        // 자리를 잡은 뒤(Loaded) 놓아 주고, 그 뒤로는 서로 독립한 창이 된다.
+        _parent = owner;
         Owner = owner;
+        Loaded += (_, _) => Owner = null;
+
+        // 소유자를 놓으면 메인 창이 닫혀도 따라 닫히지 않는다. 기본 ShutdownMode 가
+        // OnLastWindowClose 라, 남겨 두면 창만 없는 프로세스가 살아 있게 된다.
+        owner.Closed += OnParentClosed;
         // 창이 여럿일 때 무엇이 언제 남긴 것인지는 제목에서만 갈린다(§9.6).
         Title = $"ChronoLoad — {snapshot.StartedLocal:HH:mm:ss} 부터 "
               + $"{Describe(snapshot.Span)} · {snapshot.Count:N0} 샘플";
@@ -138,8 +152,11 @@ public sealed class SnapshotWindow : Window
     protected override void OnClosed(EventArgs e)
     {
         base.OnClosed(e);
-        if (_activeWhenClosing && Owner is { IsLoaded: true } owner) owner.Activate();
+        _parent.Closed -= OnParentClosed;
+        if (_activeWhenClosing && _parent.IsLoaded) _parent.Activate();
     }
+
+    private void OnParentClosed(object? sender, EventArgs e) => Close();
 
     /// <summary>지금 분석 도메인. 요약도 내보내기도 이 범위만 본다.</summary>
     private (int From, int To) Domain => _crops[^1];
