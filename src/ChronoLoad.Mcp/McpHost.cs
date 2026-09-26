@@ -181,9 +181,11 @@ public sealed class McpHost : IAsyncDisposable
         McpTokenFile.Delete();
 
         using var stopping = new CancellationTokenSource(TimeSpan.FromSeconds(2));
-        try { await _app.StopAsync(stopping.Token); }
+        // ConfigureAwait(false) 를 빠뜨리면 이어받기가 호출한 스레드로 돌아가려 한다.
+        // WPF 종료 경로에서 이것을 블로킹으로 기다리면 그 스레드가 이미 막혀 있어 영영 풀리지 않는다.
+        try { await _app.StopAsync(stopping.Token).ConfigureAwait(false); }
         catch (OperationCanceledException) { }
-        await _app.DisposeAsync();
+        await _app.DisposeAsync().ConfigureAwait(false);
         _app = null;
     }
 }

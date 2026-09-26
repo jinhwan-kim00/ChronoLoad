@@ -92,18 +92,49 @@ public partial class App : Application
             SamplePeriod = options.FastPeriod,
         };
 
-        _mcp = Mcp.McpHost.StartAsync(context).GetAwaiter().GetResult();
+        // 기동도 같은 모양이다. 지금은 통과하지만 같은 함정을 두 곳에 남길 이유가 없다.
+        _mcp = Task.Run(() => Mcp.McpHost.StartAsync(context)).GetAwaiter().GetResult();
         if (_mcp is not null) SensorLog.Write($"MCP 서버 http://127.0.0.1:{_mcp.Port}/mcp");
     }
 
     protected override void OnExit(ExitEventArgs e)
     {
         // 토큰 파일부터 지운다. 남아 있으면 브리지가 죽은 앱에 계속 붙으려 한다.
-        _mcp?.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        Finish(() => _mcp?.DisposeAsync().AsTask());
         _processes?.Dispose();
         _watcher?.Dispose();
-        _engine?.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        Finish(() => _engine?.DisposeAsync().AsTask());
         base.OnExit(e);
+    }
+
+    /// <summary>
+    /// 종료 정리를 <b>스레드 풀에서</b> 돌리고 기다린다. 제한 시간을 넘으면 포기한다.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>OnExit</c> 는 Dispatcher 스레드에서 돈다. 여기서 async 정리를 그냥 블로킹으로
+    /// 기다리면, <c>ConfigureAwait(false)</c> 가 없는 이어받기가 <b>그 Dispatcher 로 돌아오려 한다</b> —
+    /// 스레드는 이미 막혀 있고 Dispatcher 는 내려가는 중이라 그 이어받기는 영영 실행되지 않는다.
+    /// 창은 닫혔는데 프로세스만 남는다. 실제로 그랬다.
+    /// </para>
+    /// <para>
+    /// <see cref="Task.Run(Func{Task})"/> 안에서는 동기화 컨텍스트가 없으므로 이어받기가 풀로 간다.
+    /// 라이브러리 쪽에 <c>ConfigureAwait(false)</c> 를 다는 것과 <b>둘 다</b> 한다 —
+    /// 하나는 위생이고 하나는 방벽이다. 새 await 하나가 다시 앱을 좀비로 만들면 안 된다.
+    /// </para>
+    /// </remarks>
+    private static void Finish(Func<Task?> work, int timeoutMs = 3000)
+    {
+        try
+        {
+            if (!Task.Run(() => work() ?? Task.CompletedTask).Wait(timeoutMs))
+                SensorLog.Write("종료 정리가 제한 시간을 넘겼다. 나머지는 프로세스 종료에 맡긴다.");
+        }
+        catch (Exception ex)
+        {
+            // 정리에 실패해도 끝은 나야 한다. 못 나가는 것보다 낫다.
+            SensorLog.Write($"종료 정리 실패: {ex.Message}");
+        }
     }
 
     /// <summary>
