@@ -34,6 +34,7 @@ public sealed class SnapshotWindow : Window
     private const int MinViewPoints = 8;
 
     private readonly MetricSnapshot _snapshot;
+    private readonly ThemePalette _palette;
     private readonly long _gapThreshold;
 
     /// <summary>크롭 스택. 맨 위가 지금 보는 분석 도메인이고, 바닥이 떠낸 전체다.</summary>
@@ -59,7 +60,7 @@ public sealed class SnapshotWindow : Window
         _crops.Add((0, snapshot.Count));
         (_viewStart, _viewCount) = Domain;
 
-        var palette = ThemeService.Instance.Palette;
+        var palette = _palette = ThemeService.Instance.Palette;
 
         Owner = owner;
         Title = $"ChronoLoad — {snapshot.StartedLocal:HH:mm:ss}";
@@ -98,6 +99,15 @@ public sealed class SnapshotWindow : Window
         PreviewMouseWheel += OnWheel;
         PreviewKeyDown += OnKey;
         Refresh();
+    }
+
+    /// <summary>
+    /// 제목 표시줄은 OS 가 그린다. 핸들이 생긴 뒤라야 색을 알려 줄 수 있다.
+    /// </summary>
+    protected override void OnSourceInitialized(EventArgs e)
+    {
+        base.OnSourceInitialized(e);
+        WindowFrame.Apply(this, _palette, ReferenceEquals(_palette, ThemePalette.Dark));
     }
 
     /// <summary>지금 분석 도메인. 요약도 내보내기도 이 범위만 본다.</summary>
