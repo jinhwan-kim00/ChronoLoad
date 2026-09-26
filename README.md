@@ -157,6 +157,7 @@ build-release framework    :: 런타임 의존 — 작지만 .NET 10 데스크�
 ## 문서
 
 - [PROJECT.md](PROJECT.md) — 설계서. 요구사항부터 구현에서 막혔던 지점까지
+- [CHANGE_LOG.md](CHANGE_LOG.md) — 개정 이력
 - [docs/ux-design.html](docs/ux-design.html) — UX 설계서(브라우저로 열면 동작하는 목업)
 
 ## 현재 상태

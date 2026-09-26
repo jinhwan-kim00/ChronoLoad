@@ -2,6 +2,8 @@
   <Folder Name="/docs/">
     <File Path="README.md" />
     <File Path="PROJECT.md" />
+    <File Path="CHANGE_LOG.md" />
+    <File Path="CLAUDE.md" />
     <File Path="docs/ux-design.html" />
   </Folder>
   <Folder Name="/src/">
