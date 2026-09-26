@@ -49,13 +49,21 @@ public sealed class AppSettings
     /// <summary>읽어들인 원본. 모르는 키를 보존하기 위해 들고 있는다.</summary>
     private JsonObject _raw = [];
 
-    /// <summary>불투명도의 하한. 이보다 흐려지면 읽을 수 없고, 창을 다시 찾기도 어려워진다.</summary>
-    public const double MinOpacity = 0.6;
+    /// <summary>
+    /// 불투명도의 하한. 처음에는 0.6 이었는데 <b>그 정도로는 뒤가 거의 보이지 않았다</b> —
+    /// 기능이 있으나 마나였다. 0.25 면 창이 유령처럼 남아 뒤를 읽을 수 있으면서도,
+    /// 어디에 있는지는 여전히 보인다.
+    /// </summary>
+    /// <remarks>
+    /// 0 까지 열지 않는 이유는 창을 <b>다시 찾지 못하게</b> 되기 때문이다. 불투명도는 히트
+    /// 테스트에 영향을 주지 않으므로 보이지 않아도 눌리기는 하지만, 보이지 않는 것을 누를 수는 없다.
+    /// </remarks>
+    public const double MinOpacity = 0.25;
 
     public WindowPlacement? Window { get; set; }
     public bool Topmost { get; set; }
 
-    /// <summary>창 불투명도 0.6~1.0 (§9.4).</summary>
+    /// <summary>창 불투명도 0.25~1.0 (§9.4).</summary>
     public double Opacity
     {
         get;

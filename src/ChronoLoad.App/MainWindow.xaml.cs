@@ -523,12 +523,11 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// 창 불투명도를 바꾼다. 하한이 60% 인 것은 그 아래로 가면 읽을 수 없고,
-    /// 창을 <b>다시 찾기도</b> 어려워지기 때문이다(§9.4).
+    /// 창 불투명도를 바꾼다. 하한은 25% 다 — 0 까지 열면 창을 <b>다시 찾지 못한다</b>(§9.4).
     /// </summary>
     private void SetOpacity(double value)
     {
-        _settings.Opacity = value;      // 세터가 0.6~1.0 으로 자른다
+        _settings.Opacity = value;      // 세터가 0.25~1.0 으로 자른다
         Opacity = _settings.Opacity;
         _openSettings?.SyncOpacity();   // 팝오버가 열려 있으면 슬라이더도 따라온다
         MarkSettingsDirty();
@@ -787,6 +786,15 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// HWND 가 생긴 뒤에야 레이어드 속성을 걸 수 있다. 생성자에서 부르면 핸들이 0 이라
+    /// 조용히 아무 일도 일어나지 않는다 — 저장된 불투명도가 <b>첫 실행에만</b> 먹지 않는 꼴이 된다.
+    /// </summary>
+    protected override void OnSourceInitialized(EventArgs e)
+    {
+        base.OnSourceInitialized(e);
+        Opacity = _settings.Opacity;
+    }
 
 
     protected override void OnClosed(EventArgs e)
