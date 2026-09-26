@@ -28,6 +28,9 @@ public partial class App : Application
         {
             int scrubIndex = Array.FindIndex(e.Args, a => a == "--scrub");
             int widthIndex = Array.FindIndex(e.Args, a => a == "--width");
+            int heightIndex = Array.FindIndex(e.Args, a => a == "--height");
+            double? windowHeight = heightIndex >= 0 && heightIndex + 1 < e.Args.Length
+                && double.TryParse(e.Args[heightIndex + 1], out double dip) ? dip : null;
             TimeSpan? width = widthIndex >= 0 && widthIndex + 1 < e.Args.Length
                 && double.TryParse(e.Args[widthIndex + 1], out double seconds)
                 ? TimeSpan.FromSeconds(seconds) : null;
@@ -37,7 +40,7 @@ public partial class App : Application
                 e.Args.Contains("--collapsed"), scrub, e.Args.Contains("--hotplug"),
                 e.Args.Contains("--about"), e.Args.Contains("--scrub-drift"),
                 e.Args.Contains("--gap"), width, e.Args.Contains("--settings"),
-                e.Args.Contains("--snapshot"));
+                e.Args.Contains("--snapshot"), windowHeight);
             return;
         }
 
@@ -145,7 +148,7 @@ public partial class App : Application
     private void RunRenderTest(string outputPath, bool light, bool collapsed, int? scrubIndex = null,
                                bool hotPlug = false, bool about = false, bool scrubDrift = false,
                                bool gap = false, TimeSpan? width = null, bool settings = false,
-                               bool snapshot = false)
+                               bool snapshot = false, double? windowHeight = null)
     {
         // 렌더 테스트는 합성 장치를 쓴다. 실제 설정 폴더를 그대로 쓰면 사용자의 창 위치를
         // 읽어 와 그림이 달라지고, 끝낼 때 gpu:demo 같은 가짜 장치 키를 사용자 파일에 남긴다.
@@ -174,6 +177,12 @@ public partial class App : Application
             ShowInTaskbar = false,
         };
         window.Show();
+
+        // README 스크린샷은 이 노트북 화면(작업 영역이 낮다)에 눌리지 않은 모습이어야 한다.
+        // 창을 띄운 <b>뒤에</b> 높이를 준다 — 앞서 주면 첫 실행 높이 계산(작업 영역 85% 상한)이 덮는다.
+        if (windowHeight is { } dip)
+            window.Dispatcher.InvokeAsync(() => window.Height = dip,
+                System.Windows.Threading.DispatcherPriority.Loaded);
 
         if (hotPlug) RunHotPlugScript(window, registry, engine!, outputPath);
         else if (scrubDrift) RunScrubDriftScript(window, registry, engine!, outputPath);

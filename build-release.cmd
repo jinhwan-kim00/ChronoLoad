@@ -7,7 +7,7 @@ rem
 rem   build-release            자체 포함(기본). 받는 사람이 .NET 을 설치하지 않아도 된다
 rem   build-release framework  런타임 의존. 용량은 작지만 .NET 10 데스크톱 런타임이 필요하다
 rem
-rem 결과: dist\ChronoLoad-<버전>-<종류>.zip  (실행 파일 + 브리지 + README)
+rem 결과: dist\ChronoLoad-<버전>-<종류>.zip  (실행 파일 + 브리지 + README + 개정 이력 + 스크린샷)
 
 cd /d "%~dp0"
 
@@ -93,6 +93,12 @@ echo %STEP%
 copy /y "%STAGE%\app\ChronoLoad.App.exe" "%STAGE%\ChronoLoad.exe" >nul || goto :fail
 copy /y "%STAGE%\bridge\chronoload-mcp.exe" "%STAGE%\chronoload-mcp.exe" >nul || goto :fail
 copy /y README.md "%STAGE%\README.md" >nul || goto :fail
+copy /y CHANGE_LOG.md "%STAGE%\CHANGE_LOG.md" >nul || goto :fail
+
+rem README 가 docs\screenshot.png 를 가리킨다. 같이 넣지 않으면 받는 사람의 화면에는
+rem 깨진 이미지 자리만 남는다 — 상대 경로 그대로 두려면 폴더 구조도 그대로 만든다.
+mkdir "%STAGE%\docs" || goto :fail
+copy /y docs\screenshot.png "%STAGE%\docs\screenshot.png" >nul || goto :fail
 rmdir /s /q "%STAGE%\app" "%STAGE%\bridge"
 
 rem 푼 폴더는 지우지 않는다. 압축은 그 폴더를 그대로 담는다.

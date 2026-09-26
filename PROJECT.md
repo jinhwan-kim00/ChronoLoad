@@ -2,7 +2,7 @@
 
 > GPU 워크로드 중심의 실시간 시스템 모니터. WPF 세로형 위젯 + MCP 서버.
 
-- **문서 버전**: 1.18 — 개정 이력은 [`CHANGE_LOG.md`](CHANGE_LOG.md)
+- **문서 버전**: 1.20 — 개정 이력은 [`CHANGE_LOG.md`](CHANGE_LOG.md)
 - **최초 작성**: 2026-09-23 · **최종 갱신**: 2026-09-26
 - **대상 런타임**: .NET 10 (`net10.0-windows`), Windows 10 20H2 이상 / Windows 11
 - **UX 시각 설계서**: [`docs/ux-design.html`](docs/ux-design.html) — 브라우저로 열면 라이브 목업이 동작합니다

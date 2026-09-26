@@ -182,14 +182,14 @@ public sealed class SnapshotWindow : Window
         stack.Children.Add(rulerHost);
 
         var row = new DockPanel { Height = 20, LastChildFill = true };
-        Style(_rangeStart, palette.Dim);
-        Style(_rangeEnd, palette.Dim);
-        Style(_zoomText, palette.Fg);
+        AsAxisLabel(_rangeStart, palette.Dim);
+        AsAxisLabel(_rangeEnd, palette.Dim);
+        AsAxisLabel(_zoomText, palette.Fg);
 
         DockPanel.SetDock(_rangeStart, Dock.Left);
         row.Children.Add(_rangeStart);
 
-        Style(_instant, palette.Fg);
+        AsAxisLabel(_instant, palette.Fg);
         _instant.Margin = new Thickness(10, 0, 0, 0);
         _instant.Visibility = Visibility.Collapsed;
         DockPanel.SetDock(_instant, Dock.Left);
@@ -525,7 +525,8 @@ public sealed class SnapshotWindow : Window
         VerticalAlignment = VerticalAlignment.Center,
     };
 
-    private static void Style(TextBlock block, Color color)
+    // FrameworkElement.Style 을 가리지 않도록 이름을 달리한다(CS0108).
+    private static void AsAxisLabel(TextBlock block, Color color)
     {
         block.FontFamily = new FontFamily("Cascadia Mono, Consolas");
         block.FontSize = 10.5;
