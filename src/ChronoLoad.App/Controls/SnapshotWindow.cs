@@ -27,7 +27,8 @@ namespace ChronoLoad.App.Controls;
 /// </remarks>
 public sealed class SnapshotWindow : Window
 {
-    private const double ChartHeight = 96;
+    /// <summary>주 판의 높이. 값을 읽는 창이라 곁눈질용 메인 창(약 72)보다 넉넉하다.</summary>
+    private const double ChartHeight = 116;
     /// <summary>홈통 폭. "30.9GB" 가 잘리지 않을 만큼은 있어야 한다 — 잘린 단위는 없느니만 못하다.</summary>
     private const double GutterWidth = 44;
     /// <summary>요약 띠 높이. 줄 전체가 접기 버튼이므로 손이 닿을 만큼은 있어야 한다.</summary>
@@ -71,7 +72,9 @@ public sealed class SnapshotWindow : Window
         Title = $"ChronoLoad — {snapshot.StartedLocal:HH:mm:ss} 부터 "
               + $"{Describe(snapshot.Span)} · {snapshot.Count:N0} 샘플";
         Width = 900;
-        Height = 620;
+        // GPU 는 판을 둘 쓰므로(§9.6) 620 이면 마지막 장치가 잘린 채로 열린다. 그렇다고
+        // 고정으로 키우면 작업 영역이 낮은 노트북에서 창이 화면 밖으로 나간다 — 씌운다.
+        Height = Math.Min(860, SystemParameters.WorkArea.Height * 0.9);
         MinWidth = 520;
         MinHeight = 300;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
@@ -252,26 +255,39 @@ public sealed class SnapshotWindow : Window
         foreach (var group in _snapshot.Metrics.GroupBy(m => m.Device.Key))
         {
             var metrics = group.ToArray();
-            var (primary, secondary) = Pick(metrics);
+            var (primary, secondary, subPrimary, subSecondary, subName) = Pick(metrics);
             if (primary is null) continue;
 
-            var row = new Row(this, primary, secondary, palette, _snapshot, _gapThreshold);
+            var row = new Row(this, primary, secondary, subPrimary, subSecondary, subName,
+                              palette, _snapshot, _gapThreshold);
             _rows.Add(row);
             _host.Children.Add(row.Panel);
         }
     }
 
-    /// <summary>카드(§8.2)와 같은 선택이다 — 장치당 하나, 짝이 있으면 겹쳐 그린다.</summary>
-    private static (SnapshotMetric? Primary, SnapshotMetric? Secondary) Pick(SnapshotMetric[] metrics)
+    /// <summary>
+    /// 카드(§8.2)와 같은 선택이다 — 장치당 하나, 짝이 있으면 겹쳐 그린다.
+    /// <b>GPU 만 판을 하나 더</b> 받는다.
+    /// </summary>
+    /// <remarks>
+    /// 사용률은 퍼센트이고 메모리는 바이트다. 한 그림에 겹치면 둘 중 하나는 읽을 수 없는데,
+    /// 스냅샷을 여는 이유가 대개 "그 구간에 VRAM 이 얼마나 찼나" 라 빼 둘 수도 없다.
+    /// 그렇다고 장치를 둘로 쪼개면 한 GPU 의 이야기가 카드 두 장으로 갈린다 — 판만 더 붙인다.
+    /// </remarks>
+    private static (SnapshotMetric? Primary, SnapshotMetric? Secondary,
+                    SnapshotMetric? SubPrimary, SnapshotMetric? SubSecondary, string SubName)
+        Pick(SnapshotMetric[] metrics)
     {
         SnapshotMetric? Find(MetricKind kind) => metrics.FirstOrDefault(m => m.Kind == kind);
 
         return metrics[0].Device.Class switch
         {
-            DeviceClass.Network => (Find(MetricKind.NetRx), Find(MetricKind.NetTx)),
-            DeviceClass.Disk => (Find(MetricKind.DiskRead), Find(MetricKind.DiskWrite)),
-            DeviceClass.Gpu => (Find(MetricKind.GpuUtil), Find(MetricKind.GpuCompute)),
-            _ => (Find(MetricKind.CpuTotal) ?? Find(MetricKind.MemUsed), Find(MetricKind.MemCommit)),
+            DeviceClass.Network => (Find(MetricKind.NetRx), Find(MetricKind.NetTx), null, null, ""),
+            DeviceClass.Disk => (Find(MetricKind.DiskRead), Find(MetricKind.DiskWrite), null, null, ""),
+            DeviceClass.Gpu => (Find(MetricKind.GpuUtil), Find(MetricKind.GpuCompute),
+                                Find(MetricKind.GpuDedicated), Find(MetricKind.GpuShared), "메모리"),
+            _ => (Find(MetricKind.CpuTotal) ?? Find(MetricKind.MemUsed), Find(MetricKind.MemCommit),
+                  null, null, ""),
         };
     }
 
@@ -380,7 +396,7 @@ public sealed class SnapshotWindow : Window
         {
             e.Handled = true;
             // 커서가 가리키는 시각을 붙든 채 배율만 바꾼다.
-            var chart = _rows.FirstOrDefault(r => r.Chart.IsMouseOver)?.Chart;
+            var chart = _rows.Select(r => r.Hovered).FirstOrDefault(c => c is not null);
             double anchor = chart is null ? 0.5
                 : Math.Clamp(e.GetPosition(chart).X / Math.Max(1, chart.ActualWidth), 0, 1);
             Zoom(e.Delta > 0 ? -1 : +1, anchor);
@@ -567,6 +583,24 @@ public sealed class SnapshotWindow : Window
         : span.TotalMinutes < 60 ? $"{span.TotalMinutes:0.0}분"
         : $"{span.TotalHours:0.0}시간";
 
+    /// <summary>
+    /// 오버레이에 적는 계열 이름. 짝이 있는 지표만 이름이 필요하다 —
+    /// 계열이 하나뿐이면 무엇인지는 장치 이름이 이미 말한다.
+    /// </summary>
+    private static string SeriesName(MetricKind kind) => kind switch
+    {
+        MetricKind.GpuDedicated => "전용",
+        MetricKind.GpuShared => "공유",
+        MetricKind.GpuCompute => "Compute",
+        MetricKind.NetRx => "수신",
+        MetricKind.NetTx => "송신",
+        MetricKind.DiskRead => "읽기",
+        MetricKind.DiskWrite => "쓰기",
+        MetricKind.MemCommit => "커밋",
+        MetricKind.MemUsed => "사용",
+        _ => "",
+    };
+
     private static string Describe(TimeSpan span) =>
         span.TotalSeconds < 60 ? $"{span.TotalSeconds:0}초"
         : span.TotalMinutes < 60 ? $"{span.TotalMinutes:0}분"
@@ -653,92 +687,39 @@ public sealed class SnapshotWindow : Window
         return brush;
     }
 
-    /// <summary>장치 한 줄 — 요약 띠와 차트.</summary>
-    internal sealed class Row
+    /// <summary>
+    /// 차트 한 판 — 그림과 왼쪽 홈통, 그리고 그 위에 뜨는 오버레이.
+    /// </summary>
+    /// <remarks>
+    /// 한 장치가 판을 둘 가질 수 있다. GPU 는 사용률(%)과 메모리(바이트)의 <b>축이 다르다</b> —
+    /// 한 그림에 겹치면 둘 중 하나는 읽을 수 없다. 그렇다고 장치를 둘로 쪼개면 "이 GPU 의
+    /// 이야기"가 카드 두 장으로 갈린다. 판만 하나 더 붙인다.
+    /// </remarks>
+    internal sealed class Plot
     {
-        private readonly SnapshotWindow _window;
         private readonly SnapshotMetric _primary;
         private readonly SnapshotMetric? _secondary;
-        private readonly TextBlock _stats, _scope;
-        private readonly System.Windows.Shapes.Path _chevron;
-        private readonly Grid _body;
-        private readonly Border _overlay;
-        private readonly StackPanel _overlayRows;
         private readonly ThemePalette _palette;
         private readonly Color _accent;
         private readonly TextBlock _top, _mid, _bottom;
+        private readonly Border _overlay;
+        private readonly StackPanel _overlayRows;
 
-        public StackPanel Panel { get; }
         public SnapshotChart Chart { get; }
-        public bool Collapsed { get; set; }
+        public Grid Body { get; }
 
-        public Row(SnapshotWindow window, SnapshotMetric primary, SnapshotMetric? secondary,
-                   ThemePalette palette, MetricSnapshot snapshot, long gapThreshold)
+        public Plot(SnapshotWindow window, SnapshotMetric primary, SnapshotMetric? secondary,
+                    ThemePalette palette, Color accent, MetricSnapshot snapshot,
+                    long gapThreshold, double height)
         {
-            _window = window;
             _primary = primary;
             _secondary = secondary;
-
-            var accent = palette.AccentFor(primary.Device.Class, primary.Device.Key);
             _palette = palette;
             _accent = accent;
 
-            _chevron = new System.Windows.Shapes.Path
-            {
-                Data = Icons.Chevron,
-                Stroke = Frozen(palette.Faint),
-                StrokeThickness = 1.7,
-                StrokeStartLineCap = PenLineCap.Round,
-                StrokeEndLineCap = PenLineCap.Round,
-                Stretch = Stretch.None,
-                Width = Icons.DesignSize,
-                Height = Icons.DesignSize,
-                LayoutTransform = new ScaleTransform(11 / Icons.DesignSize, 11 / Icons.DesignSize),
-                VerticalAlignment = VerticalAlignment.Center,
-                RenderTransformOrigin = new Point(0.5, 0.5),
-            };
-
-            // 배경이 없는 패널은 <b>그린 픽셀 위에서만</b> 히트된다. 투명 배경을 깔지 않으면
-            // 셰브런과 글자 위만 눌려, 접으려면 11px 짜리 화살표를 정확히 찍어야 한다.
-            var strip = new DockPanel
-            {
-                Height = StripHeight,
-                Cursor = Cursors.Hand,
-                Background = Brushes.Transparent,
-            };
-            DockPanel.SetDock(_chevron, Dock.Left);
-            strip.Children.Add(_chevron);
-
-            var dot = new Border
-            {
-                Width = 8, Height = 8,
-                CornerRadius = new CornerRadius(2),
-                Background = Frozen(accent),
-                Margin = new Thickness(7, 0, 7, 0),
-                VerticalAlignment = VerticalAlignment.Center,
-            };
-            DockPanel.SetDock(dot, Dock.Left);
-            strip.Children.Add(dot);
-
-            var name = Text(primary.Device.ShortName, 12, palette.Fg, FontWeights.SemiBold,
-                new Thickness(0, 0, 10, 0));
-            DockPanel.SetDock(name, Dock.Left);
-            strip.Children.Add(name);
-
-            _scope = Mono("표시 구간", 9.5, palette.Gpu);
-            _scope.Margin = new Thickness(8, 0, 0, 0);
-            DockPanel.SetDock(_scope, Dock.Right);
-            strip.Children.Add(_scope);
-
-            _stats = Mono("", 11, palette.Dim);
-            strip.Children.Add(_stats);
-
-            strip.MouseLeftButtonUp += (_, _) => window.ToggleRow(this);
-
-            // ── 차트와 홈통 ─────────────────────────────
             Chart = new SnapshotChart
             {
-                Height = ChartHeight,
+                Height = height,
                 Palette = palette,
                 Accent = accent,
                 Timestamps = snapshot.Timestamps,
@@ -798,32 +779,45 @@ public sealed class SnapshotWindow : Window
             plot.Children.Add(Chart);
             plot.Children.Add(_overlay);
 
-            _body = new Grid { Margin = new Thickness(0, 2, 0, 0) };
-            _body.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            _body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            Body = new Grid { Margin = new Thickness(0, 2, 0, 0) };
+            Body.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            Body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             Grid.SetColumn(plot, 1);
-            _body.Children.Add(gutter);
-            _body.Children.Add(plot);
+            Body.Children.Add(gutter);
+            Body.Children.Add(plot);
+        }
 
-            Panel = new StackPanel { Margin = new Thickness(0, 0, 0, 9) };
-            Panel.Children.Add(strip);
-            Panel.Children.Add(_body);
+        /// <summary>
+        /// 구간 통계 한 줄.
+        /// </summary>
+        /// <param name="both">
+        /// 짝까지 적는가. 요약 띠는 장치명과 <c>선택 구간</c> 칩이 이미 자리를 쓰므로 주 계열만
+        /// 적고, 곁들이 판의 이름표는 자리가 남으므로 <b>전용과 공유를 나란히</b> 적는다 —
+        /// 스냅샷에서 보려는 것이 대개 "전용이 얼마나 찼고 공유로 얼마나 샜나" 다.
+        /// </param>
+        public string Summarize(int from, int to, bool both)
+        {
+            string text = Stat(_primary, from, to, both);
+            return both && _secondary is not null
+                ? text + "    " + Stat(_secondary, from, to, true)
+                : text;
+        }
+
+        /// <summary>표본이 없으면 <c>0</c> 이 아니라 <c>—</c> 다. 없는 것과 0 은 다르다.</summary>
+        private static string Stat(SnapshotMetric metric, int from, int to, bool named)
+        {
+            string head = named && SeriesName(metric.Kind) is { Length: > 0 } name ? name + " " : "";
+            var stats = metric.StatsOf(from, to);
+            if (!stats.HasValue) return head + "—";
+
+            var (values, symbol) = MetricFormatter.FormatGroup(metric.Unit, stats.Mean, stats.Min, stats.Max);
+            string gap = named ? "  " : "   ";
+            return $"{head}평균 {values[0]}{symbol}{gap}최소 {values[1]}{gap}최대 {values[2]}";
         }
 
         public void Update(int viewStart, int viewCount, int? selectA, int? selectB, int? scrub,
-                           List<(double Fraction, DateTime Time)> ticks, (int From, int To) range)
+                           List<(double Fraction, DateTime Time)> ticks)
         {
-            _body.Visibility = Collapsed ? Visibility.Collapsed : Visibility.Visible;
-            _chevron.RenderTransform = new RotateTransform(Collapsed ? -90 : 0);
-
-            // 접어도 숫자는 남긴다. 접는 목적이 "자리를 비워 다른 장치를 크게 보는 것"이라
-            // 접힌 장치가 비교 대상에서 빠지면 안 된다.
-            var stats = _primary.StatsOf(range.From, range.To);
-            _stats.Text = Describe(stats, _primary.Unit);
-            _scope.Text = selectA is not null && selectB is not null ? "선택 구간" : "표시 구간";
-
-            if (Collapsed) return;
-
             // 축 상한은 여기서 정해 차트에 넘긴다. 차트가 그린 뒤에 읽으면 라벨이 한 프레임
             // 늦어, 처음 뜰 때 "0KB" 같은 값이 남는다 — 실제로 그랬다.
             double max = Resolve(viewStart, viewCount);
@@ -855,6 +849,7 @@ public sealed class SnapshotWindow : Window
             _overlayRows.Children.Clear();
             _overlayRows.Children.Add(Line(_primary, index, _accent, 1));
             if (_secondary is not null) _overlayRows.Children.Add(Line(_secondary, index, _accent, 0.75));
+
             _overlay.Visibility = Visibility.Visible;
 
             // 패널 폭은 <b>내용</b>에서 잰다. 테두리를 두른 쪽을 재면 지난번에 밀어둔 여백이
@@ -882,6 +877,15 @@ public sealed class SnapshotWindow : Window
                 VerticalAlignment = VerticalAlignment.Center,
             });
 
+            // 색이 같고 진하기만 다른 두 선이라, 이름이 없으면 어느 쪽이 전용이고 어느 쪽이
+            // 공유인지 그림만 보고는 알 수 없다. 값보다 이름이 먼저 온다.
+            if (SeriesName(metric.Kind) is { Length: > 0 } name)
+            {
+                var label = Mono(name, 11, _palette.Dim);
+                label.Margin = new Thickness(0, 0, 6, 0);
+                row.Children.Add(label);
+            }
+
             float v = metric.Values[index];
             var formatted = MetricFormatter.Format(metric.Unit, float.IsNaN(v) ? 0 : v);
             row.Children.Add(Mono(float.IsNaN(v) ? "—" : formatted.Value + formatted.Unit, 11, _palette.Fg));
@@ -906,19 +910,140 @@ public sealed class SnapshotWindow : Window
 
         private static double Finite(float v) => float.IsNaN(v) ? 0 : v;
 
-        /// <summary>표본이 없으면 <c>0</c> 이 아니라 <c>—</c> 다. 없는 것과 0 은 다르다.</summary>
-        private static string Describe(RangeStats stats, MetricUnit unit)
-        {
-            if (!stats.HasValue) return "—";
-
-            var (values, symbol) = MetricFormatter.FormatGroup(unit, stats.Mean, stats.Min, stats.Max);
-            return $"평균 {values[0]}{symbol}   최소 {values[1]}   최대 {values[2]}";
-        }
-
         private static string Axis(double value, MetricUnit unit)
         {
             var formatted = MetricFormatter.Format(unit, value);
             return unit == MetricUnit.Percent ? formatted.Value : formatted.Value + formatted.Unit;
+        }
+    }
+
+    /// <summary>장치 한 줄 — 요약 띠와 차트 한두 판.</summary>
+    internal sealed class Row
+    {
+        /// <summary>곁들이 판의 높이. 주 판보다 낮다 — 딸린 것이지 맞선 것이 아니다.</summary>
+        private const double SubChartHeight = 77;
+
+        private readonly TextBlock _stats, _scope;
+        private readonly TextBlock? _subLabel;
+        private readonly string _subName;
+        private readonly System.Windows.Shapes.Path _chevron;
+        private readonly StackPanel _bodies;
+        private readonly Plot _main;
+        private readonly Plot? _sub;
+
+        public StackPanel Panel { get; }
+        public bool Collapsed { get; set; }
+
+        /// <summary>커서가 얹힌 판의 차트. <c>Ctrl</c>+휠이 확대 기준점을 잡을 때 쓴다.</summary>
+        public SnapshotChart? Hovered =>
+            _main.Chart.IsMouseOver ? _main.Chart
+            : _sub is not null && _sub.Chart.IsMouseOver ? _sub.Chart
+            : null;
+
+        public Row(SnapshotWindow window, SnapshotMetric primary, SnapshotMetric? secondary,
+                   SnapshotMetric? subPrimary, SnapshotMetric? subSecondary, string subName,
+                   ThemePalette palette, MetricSnapshot snapshot, long gapThreshold)
+        {
+            _subName = subName;
+            var accent = palette.AccentFor(primary.Device.Class, primary.Device.Key);
+
+            _chevron = new System.Windows.Shapes.Path
+            {
+                Data = Icons.Chevron,
+                Stroke = Frozen(palette.Faint),
+                StrokeThickness = 1.7,
+                StrokeStartLineCap = PenLineCap.Round,
+                StrokeEndLineCap = PenLineCap.Round,
+                Stretch = Stretch.None,
+                Width = Icons.DesignSize,
+                Height = Icons.DesignSize,
+                LayoutTransform = new ScaleTransform(11 / Icons.DesignSize, 11 / Icons.DesignSize),
+                VerticalAlignment = VerticalAlignment.Center,
+                RenderTransformOrigin = new Point(0.5, 0.5),
+            };
+
+            // 배경이 없는 패널은 <b>그린 픽셀 위에서만</b> 히트된다. 투명 배경을 깔지 않으면
+            // 셰브런과 글자 위만 눌려, 접으려면 11px 짜리 화살표를 정확히 찍어야 한다.
+            var strip = new DockPanel
+            {
+                Height = StripHeight,
+                Cursor = Cursors.Hand,
+                Background = Brushes.Transparent,
+            };
+            DockPanel.SetDock(_chevron, Dock.Left);
+            strip.Children.Add(_chevron);
+
+            var dot = new Border
+            {
+                Width = 8, Height = 8,
+                CornerRadius = new CornerRadius(2),
+                Background = Frozen(accent),
+                Margin = new Thickness(7, 0, 7, 0),
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            DockPanel.SetDock(dot, Dock.Left);
+            strip.Children.Add(dot);
+
+            var name = Text(primary.Device.ShortName, 12, palette.Fg, FontWeights.SemiBold,
+                new Thickness(0, 0, 10, 0));
+            DockPanel.SetDock(name, Dock.Left);
+            strip.Children.Add(name);
+
+            _scope = Mono("표시 구간", 9.5, palette.Gpu);
+            _scope.Margin = new Thickness(8, 0, 0, 0);
+            DockPanel.SetDock(_scope, Dock.Right);
+            strip.Children.Add(_scope);
+
+            _stats = Mono("", 11, palette.Dim);
+            strip.Children.Add(_stats);
+
+            strip.MouseLeftButtonUp += (_, _) => window.ToggleRow(this);
+
+            _main = new Plot(window, primary, secondary, palette, accent, snapshot,
+                             gapThreshold, ChartHeight);
+
+            _bodies = new StackPanel();
+            _bodies.Children.Add(_main.Body);
+
+            if (subPrimary is not null)
+            {
+                // 이름표도 점도 셰브런도 없다. 딸린 판이지 다른 장치가 아니다 —
+                // 적는 것은 무엇을 재는지와 그 구간의 숫자뿐이고, 들여쓰기는 홈통에 맞춘다.
+                _subLabel = Mono("", 10, palette.Dim);
+                _subLabel.Margin = new Thickness(GutterWidth + 5, 7, 0, 0);
+                // 전용과 공유를 나란히 적으면 최소 폭(520)에서는 줄이 넘친다. 잘리더라도
+                // 말줄임으로 잘렸다는 것이 보여야 한다 — 그냥 잘리면 값이 틀려 보인다.
+                _subLabel.TextTrimming = TextTrimming.CharacterEllipsis;
+                _bodies.Children.Add(_subLabel);
+
+                _sub = new Plot(window, subPrimary, subSecondary, palette, accent, snapshot,
+                                gapThreshold, SubChartHeight);
+                _bodies.Children.Add(_sub.Body);
+            }
+
+            Panel = new StackPanel { Margin = new Thickness(0, 0, 0, 9) };
+            Panel.Children.Add(strip);
+            Panel.Children.Add(_bodies);
+        }
+
+        public void Update(int viewStart, int viewCount, int? selectA, int? selectB, int? scrub,
+                           List<(double Fraction, DateTime Time)> ticks, (int From, int To) range)
+        {
+            _bodies.Visibility = Collapsed ? Visibility.Collapsed : Visibility.Visible;
+            _chevron.RenderTransform = new RotateTransform(Collapsed ? -90 : 0);
+
+            // 접어도 숫자는 남긴다. 접는 목적이 "자리를 비워 다른 장치를 크게 보는 것"이라
+            // 접힌 장치가 비교 대상에서 빠지면 안 된다.
+            _stats.Text = _main.Summarize(range.From, range.To, both: false);
+            _scope.Text = selectA is not null && selectB is not null ? "선택 구간" : "표시 구간";
+
+            if (Collapsed) return;
+
+            _main.Update(viewStart, viewCount, selectA, selectB, scrub, ticks);
+
+            if (_sub is null || _subLabel is null) return;
+            _subLabel.Text = $"{_subName}   " + _sub.Summarize(range.From, range.To, both: true);
+            _sub.Update(viewStart, viewCount, selectA, selectB, scrub, ticks);
         }
     }
 }
