@@ -161,9 +161,11 @@ public sealed class SnapshotWindow : Window
             LastChildFill = false,
         };
 
-        strip.Children.Add(Text("ChronoLoad", 12.5, palette.Fg, FontWeights.SemiBold,
-            new Thickness(12, 0, 8, 0)));
-        strip.Children.Add(Mono($"{_snapshot.StartedLocal:HH:mm:ss}", 12.5, palette.Fg));
+        // 앱 이름은 적지 않는다. 바로 위 제목 표시줄에 이미 있다.
+        var started = Mono($"{_snapshot.StartedLocal:HH:mm:ss}", 12.5, palette.Fg);
+        started.FontWeight = FontWeights.SemiBold;
+        started.Margin = new Thickness(12, 0, 0, 0);
+        strip.Children.Add(started);
         strip.Children.Add(Text(
             $"부터 {Describe(_snapshot.Span)} · {_snapshot.Count:N0} 샘플", 11.5, palette.Dim,
             FontWeights.Normal, new Thickness(7, 0, 0, 0)));
