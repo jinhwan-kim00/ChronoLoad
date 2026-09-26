@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Sockets;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
@@ -25,19 +26,46 @@ public sealed class McpHost : IAsyncDisposable
 {
     public const int DefaultPort = 7667;
 
+    /// <summary>
+    /// 포트가 이미 물려 있으면 번호를 하나씩 올려 다시 시도한다. 두 번째 인스턴스나,
+    /// 앞선 인스턴스가 포트를 아직 놓지 못한 직후 재실행이 흔한 경우다.
+    /// </summary>
+    public const int PortAttempts = 10;
+
     private WebApplication? _app;
 
     public int Port { get; private set; }
     public bool IsRunning => _app is not null;
 
+    /// <remarks>
+    /// 포트가 막혀 있으면 <see cref="PortAttempts"/>번까지 다음 번호로 옮긴다.
+    /// 실제로 잡은 포트는 토큰 파일에 적히므로 브리지는 번호가 바뀌어도 찾아온다(§10.2-1).
+    /// <b>포트 문제가 아닌 실패에서는 옮기지 않는다</b> — 권한이나 설정 탓이면 번호를
+    /// 열 번 바꿔 봐야 같은 이유로 열 번 실패할 뿐이다.
+    /// </remarks>
     public static async Task<McpHost?> StartAsync(McpContext context, int port = DefaultPort)
     {
         var host = new McpHost();
-        return await host.TryStartAsync(context, port) ? host : null;
+        for (int attempt = 0; attempt < PortAttempts; attempt++)
+        {
+            switch (await host.TryStartAsync(context, port + attempt))
+            {
+                case StartOutcome.Started: return host;
+                case StartOutcome.PortTaken: continue;
+                default: return null;
+            }
+        }
+
+        Sensors.SensorLog.Write(
+            $"MCP 서버: {port}~{port + PortAttempts - 1} 이 모두 사용 중이라 서지 못했다.");
+        return null;
     }
 
-    private async Task<bool> TryStartAsync(McpContext context, int port)
+    private enum StartOutcome { Started, PortTaken, Failed }
+
+    private async Task<StartOutcome> TryStartAsync(McpContext context, int port)
     {
+        WebApplication? app = null;
         try
         {
             var builder = WebApplication.CreateSlimBuilder();
@@ -62,7 +90,7 @@ public sealed class McpHost : IAsyncDisposable
             // 정상 동작 중인 첫 인스턴스의 토큰 파일을 지워버린다.
             string token = McpTokenFile.NewToken();
 
-            var app = builder.Build();
+            app = builder.Build();
             app.Use(async (ctx, next) => await GuardAsync(ctx, next, token));
             app.MapMcp("/mcp");
 
@@ -72,15 +100,36 @@ public sealed class McpHost : IAsyncDisposable
 
             _app = app;
             Port = port;
-            return true;
+            return StartOutcome.Started;
         }
         catch (Exception ex)
         {
+            // 세우다 만 호스트는 반드시 버린다. 열 번까지 시도하므로 놔두면 그만큼 샌다.
+            if (app is not null) await app.DisposeAsync();
+
             // 포트 충돌이나 권한 문제로 서버가 못 서도 앱 본체는 계속 돌아야 한다.
             // 여기서는 토큰 파일을 건드리지 않는다 — 그 파일은 우리 것이 아닐 수 있다.
+            if (IsPortTaken(ex))
+            {
+                Sensors.SensorLog.Write($"MCP 서버: 포트 {port} 사용 중 — 다음 번호로 옮긴다.");
+                return StartOutcome.PortTaken;
+            }
+
             Sensors.SensorLog.Write($"MCP 서버 시작 실패: {ex.Message}");
-            return false;
+            return StartOutcome.Failed;
         }
+    }
+
+    /// <summary>
+    /// 포트가 이미 물려 있어서 실패한 것인가. Kestrel 은 <see cref="SocketException"/>을
+    /// <see cref="IOException"/>으로 감싸 올리므로 안쪽까지 훑는다.
+    /// </summary>
+    internal static bool IsPortTaken(Exception? ex)
+    {
+        for (; ex is not null; ex = ex.InnerException)
+            if (ex is SocketException { SocketErrorCode: SocketError.AddressAlreadyInUse })
+                return true;
+        return false;
     }
 
     /// <summary>토큰과 <c>Origin</c> 을 본다. 통과하지 못하면 본문 없이 거절한다.</summary>

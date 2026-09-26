@@ -512,7 +512,7 @@ public sealed class CardView : Border
 
         var target = collapsed ? -90d : 0d;
         if (animate) _chevronRotation.BeginAnimation(RotateTransform.AngleProperty,
-            new DoubleAnimation(target, CollapseDuration) { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseInOut } });
+            Motion.Animate(target, CollapseDuration));
         else { _chevronRotation.BeginAnimation(RotateTransform.AngleProperty, null); _chevronRotation.Angle = target; }
 
         BorderThickness = new Thickness(1);
@@ -529,10 +529,7 @@ public sealed class CardView : Border
             return;
         }
 
-        BeginAnimation(HeightProperty, new DoubleAnimation(target, CollapseDuration)
-        {
-            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseInOut },
-        });
+        BeginAnimation(HeightProperty, Motion.Animate(target, CollapseDuration));
     }
 
     /// <summary>

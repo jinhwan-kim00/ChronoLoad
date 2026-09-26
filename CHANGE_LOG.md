@@ -28,6 +28,7 @@
 | **1.7** | **샘플 시각 링 구현**(§7.4) — `MetricRegistry` 가 프레임마다 커밋 시각을 남긴다(28.8KB 하나, 슬롯 수 무관). `Frames`·`TimestampAtFrame`·`FrameAt`·`TimestampAt`·`CopyTimestamps` 추가. 쓰이지 않던 `Commit(slot, …)` 제거 — 프레임을 밀지 않아 시각 대응을 깨뜨리는 경로였다. 하네스에 시간 축 진단 출력. 실측 틱 79 : 프레임 79, 간격 중앙 251.9ms. 테스트 153개 통과 |
 | **1.8** | **절전 복귀 공백 표시 구현**(§13) — 인접 프레임의 시각 간격이 공칭 주기 × 8(250ms 기준 2초)을 넘으면 선과 채움을 끊고 이음매에 세로선 두 줄을 긋는다. `Core/Layout/SampleGaps` 신설, `SampleEngine.NominalFastPeriod` 노출, 렌더 테스트 `--gap` 추가(합성 데이터에도 250ms 시각 부여). 테스트 163개 통과 |
 | **1.9** | **시간 폭 구현**(§9.4) — `Ctrl`+휠 사다리(30·60·180·600·900초), 차트 더블클릭은 표준 60초 복귀. 폭은 점 개수가 아니라 초로 세고 `MetricRegistry.PointsWithin` 이 시각으로 환산한다. 표준이 아닐 때만 제목 표시줄에 폭 칩. 저장하지 않는다. `Core/Layout/TimeWidthLadder` 신설, 렌더 테스트 `--width` 추가. 테스트 179개 통과 |
+| **1.10** | §15.1 잔여 3건 구현 — 디스크 큐·응답 시간 수집(§5.5, 네 틱에 한 번 써서 Slow 효과. `get_disk_status` 가 늘 `null` 이던 두 필드를 채운다), MCP 포트 폴백 7667→7668…10회(§13, 포트 문제가 아닌 실패에서는 옮기지 않는다), 접근성 「동작 줄이기」(§9.5, `App/Services/Motion`). 덤으로 `McpTokenFile` 이 `Environment.GetFolderPath` 를 직접 불러 §11 격리를 못 받던 것을 `AppSettings.Directory` 로 일원화. `LOCALAPPDATA` 를 바꾸는 테스트 두 클래스가 병렬로 부딪히던 것을 공용 헬퍼 + 직렬 컬렉션으로 정리. 테스트 183개 통과 |
 
 ---
 

@@ -2,6 +2,8 @@ using System.Security.AccessControl;
 using System.Security.Cryptography;
 using System.Security.Principal;
 
+using ChronoLoad.Core.Settings;
+
 namespace ChronoLoad.Mcp;
 
 /// <summary>
@@ -19,8 +21,13 @@ namespace ChronoLoad.Mcp;
 /// </remarks>
 public static class McpTokenFile
 {
-    public static string Directory => System.IO.Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ChronoLoad");
+    /// <summary>
+    /// 설정 파일과 같은 폴더를 쓴다. <b>계산을 따로 하지 않고 한 곳에서 받는다</b> —
+    /// 여기는 `Environment.GetFolderPath` 를 직접 불러 §11 의 격리(환경변수 우선)를 받지
+    /// 못했고, 그래서 렌더·단위 테스트가 실행 중인 앱의 토큰 파일을 지울 수 있었다.
+    /// 같은 실수를 두 번 하지 않으려면 출처가 하나여야 한다.
+    /// </summary>
+    public static string Directory => AppSettings.Directory;
 
     public static string Path => System.IO.Path.Combine(Directory, "mcp.token");
 

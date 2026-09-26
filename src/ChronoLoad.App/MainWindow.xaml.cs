@@ -241,11 +241,8 @@ public partial class MainWindow : Window
     {
         var duration = new Duration(TimeSpan.FromMilliseconds(180));
 
-        var fade = new DoubleAnimation(0, duration);
-        var shrink = new DoubleAnimation(card.ActualHeight, 0, duration)
-        {
-            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseIn },
-        };
+        var fade = new DoubleAnimation(0, Motion.Of(duration));
+        var shrink = Motion.Animate(card.ActualHeight, 0, duration, EasingMode.EaseIn);
         shrink.Completed += (_, _) =>
         {
             card.BeginAnimation(HeightProperty, null);
@@ -261,7 +258,7 @@ public partial class MainWindow : Window
     {
         card.Opacity = 0;
         card.BeginAnimation(OpacityProperty,
-            new DoubleAnimation(1, new Duration(TimeSpan.FromMilliseconds(320))));
+            new DoubleAnimation(1, Motion.Of(TimeSpan.FromMilliseconds(320))));
     }
 
     /// <summary>
@@ -472,10 +469,7 @@ public partial class MainWindow : Window
     private void AnimateWindowHeight(double target)
     {
         _suppressResizeLayout = true;
-        var animation = new DoubleAnimation(target, new Duration(TimeSpan.FromMilliseconds(220)))
-        {
-            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseInOut },
-        };
+        var animation = Motion.Animate(target, TimeSpan.FromMilliseconds(220));
         animation.Completed += (_, _) =>
         {
             BeginAnimation(HeightProperty, null);
@@ -569,10 +563,8 @@ public partial class MainWindow : Window
         // 화면의 리셋은 화면 스코프만 건드린다. MCP 쪽 기준점은 그대로 흘러간다.
         _registry.ResetAllStats(StatsScope.Ui, DateTime.UtcNow.Ticks);
 
-        var spin = new DoubleAnimation(-360, new Duration(TimeSpan.FromMilliseconds(450)))
-        {
-            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseInOut },
-        };
+        // 줄이기가 켜져 있으면 0초로 끝난다 — 눌렸다는 신호는 숫자가 초기화되는 것으로 충분하다.
+        var spin = Motion.Animate(-360, TimeSpan.FromMilliseconds(450));
         if (ResetButton.Content is FrameworkElement { RenderTransform: RotateTransform rotate })
             rotate.BeginAnimation(RotateTransform.AngleProperty, spin);
 

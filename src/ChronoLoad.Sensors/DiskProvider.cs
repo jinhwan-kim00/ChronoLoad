@@ -25,11 +25,22 @@ public sealed class DiskProvider : ISensorProvider
     private const string WritePath = @"\PhysicalDisk(*)\Disk Write Bytes/sec";
     private const string IdlePath = @"\PhysicalDisk(*)\% Idle Time";
 
+    // 큐와 응답 시간은 처리량과 달리 초 단위로 움직이는 값이다. 설계(§5.5)대로 Slow 로 읽는다 —
+    // 프로바이더 티어는 하나뿐이므로 몇 틱에 한 번만 쓰는 방식으로 같은 효과를 낸다.
+    private const string QueuePath = @"\PhysicalDisk(*)\Avg. Disk Queue Length";
+    private const string LatencyPath = @"\PhysicalDisk(*)\Avg. Disk sec/Transfer";
+
+    /// <summary>Slow 상당 — Fast 250ms 기준 네 틱에 한 번(약 1초).</summary>
+    private const int SlowEvery = 4;
+
     private readonly Dictionary<int, Disk> _disks = [];
     private PdhQuery? _query;
     private PdhCounterArray? _read;
     private PdhCounterArray? _write;
     private PdhCounterArray? _idle;
+    private PdhCounterArray? _queue;
+    private PdhCounterArray? _latency;
+    private int _tick;
     private MetricRegistry? _registry;
     // 장치 이벤트 스레드가 쓰고 샘플링 스레드가 읽는다.
     private volatile bool _enumeratePending = true;
@@ -48,6 +59,8 @@ public sealed class DiskProvider : ISensorProvider
             _read = _query.TryAddArray(ReadPath);
             _write = _query.TryAddArray(WritePath);
             _idle = _query.TryAddArray(IdlePath);
+            _queue = _query.TryAddArray(QueuePath);
+            _latency = _query.TryAddArray(LatencyPath);
         }
 
         IsAvailable = _read is not null && _write is not null;
@@ -79,7 +92,8 @@ public sealed class DiskProvider : ISensorProvider
 
             var media = StorageNative.Query(index);
             var handle = registry.Register(BuildInfo(index, instance, media),
-                [MetricKind.DiskRead, MetricKind.DiskWrite, MetricKind.DiskActive]);
+                [MetricKind.DiskRead, MetricKind.DiskWrite, MetricKind.DiskActive,
+                 MetricKind.DiskQueue, MetricKind.DiskLatency]);
 
             _disks[index] = new Disk
             {
@@ -87,6 +101,8 @@ public sealed class DiskProvider : ISensorProvider
                 ReadSlot = handle.SlotOf(MetricKind.DiskRead),
                 WriteSlot = handle.SlotOf(MetricKind.DiskWrite),
                 ActiveSlot = handle.SlotOf(MetricKind.DiskActive),
+                QueueSlot = handle.SlotOf(MetricKind.DiskQueue),
+                LatencySlot = handle.SlotOf(MetricKind.DiskLatency),
                 Instance = instance,
             };
         });
@@ -166,11 +182,26 @@ public sealed class DiskProvider : ISensorProvider
         _idle?.Read((instance, value) =>
             Stash(instance, value, static (d, v) => d.Pending.Active = Math.Clamp(100 - v, 0, 100)));
 
+        bool slow = _tick++ % SlowEvery == 0;
+        if (slow)
+        {
+            _queue?.Read((instance, value) =>
+                Stash(instance, value, static (d, v) => d.Pending.Queue = Math.Max(0, v)));
+            // 카운터는 초 단위다. 밀리초로 바꿔 내보낸다(§5.5).
+            _latency?.Read((instance, value) =>
+                Stash(instance, value, static (d, v) => d.Pending.LatencyMs = Math.Max(0, v) * 1000));
+        }
+
         foreach (var disk in _disks.Values)
         {
             writer.Write(disk.ReadSlot, (float)Math.Max(0, disk.Pending.Read));
             writer.Write(disk.WriteSlot, (float)Math.Max(0, disk.Pending.Write));
             if (disk.ActiveSlot >= 0) writer.Write(disk.ActiveSlot, (float)disk.Pending.Active);
+
+            // 느린 틱에만 쓴다. 쓰지 않은 슬롯은 직전 값이 유지되고 실측으로 세지 않는다(§7.2).
+            if (!slow) continue;
+            if (disk.QueueSlot >= 0) writer.Write(disk.QueueSlot, (float)disk.Pending.Queue);
+            if (disk.LatencySlot >= 0) writer.Write(disk.LatencySlot, (float)disk.Pending.LatencyMs);
         }
     }
 
@@ -197,6 +228,8 @@ public sealed class DiskProvider : ISensorProvider
         public int ReadSlot { get; init; }
         public int WriteSlot { get; init; }
         public int ActiveSlot { get; init; }
+        public int QueueSlot { get; init; }
+        public int LatencySlot { get; init; }
         public required string Instance { get; init; }
         public Sample Pending;
 
@@ -205,6 +238,8 @@ public sealed class DiskProvider : ISensorProvider
             public double Read;
             public double Write;
             public double Active;
+            public double Queue;
+            public double LatencyMs;
         }
     }
 }
