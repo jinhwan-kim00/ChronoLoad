@@ -21,7 +21,32 @@ public static class SnapshotCsv
     /// <summary>엑셀은 BOM 이 없으면 UTF-8 한글 헤더를 깨뜨린다.</summary>
     private static readonly UTF8Encoding Utf8WithBom = new(encoderShouldEmitUTF8Identifier: true);
 
-    private const string TimeFormat = "yyyy-MM-ddTHH:mm:ss.fff";
+    /// <summary>
+    /// 시각 표기. ISO 8601 이되 날짜와 시각 사이는 <c>T</c> 가 아니라 <b>공백</b>이다.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 엑셀은 <c>T</c> 가 끼면 날짜로 읽지 않고 <b>그냥 글자로 둔다</b>(실측). 공백으로 바꾸면
+    /// 날짜/시간 값이 되어 차트 축과 수식이 붙는다.
+    /// </para>
+    /// <para>
+    /// 밀리초는 남긴다. 250ms 로 재므로 초까지만 적으면 네 줄이 같은 시각이 되어 시계열로
+    /// 그릴 수 없다. 대신 엑셀이 소수 초를 보면 표시 형식을 <c>mm:ss.0</c> 으로 골라
+    /// 날짜를 가린다 — 값은 멀쩡하니 셀 서식만 바꾸면 된다. 어떤 표기를 줘도 그렇다(실측).
+    /// </para>
+    /// </remarks>
+    private const string TimeFormat = "yyyy-MM-dd HH:mm:ss.fff";
+
+    /// <summary>
+    /// 값 표기. <b>지수 표기를 쓰지 않는다.</b>
+    /// </summary>
+    /// <remarks>
+    /// 왕복 표기(<c>"R"</c>)는 바이트·전송률처럼 큰 수를 <c>1.3421773E+10</c> 로 적는다.
+    /// 엑셀은 읽지만 사람은 읽지 않는다. 소수 6자리까지 열어 두면 지수가 사라지고, 디스크 큐처럼
+    /// 아주 작은 값(<c>0.00001</c>)도 0 으로 뭉개지지 않는다. 자리를 늘려도 없는 정밀도가
+    /// 생기지는 않는다 — <see langword="float"/> 은 유효숫자 7자리이고 서식도 거기까지만 적는다.
+    /// </remarks>
+    private const string ValueFormat = "0.######";
 
     /// <summary>열 이름에 붙는 기본 단위. 화면 표기가 아니라 <b>저장 단위</b>다.</summary>
     public static string BaseUnit(MetricUnit unit) => unit switch
@@ -75,7 +100,7 @@ public static class SnapshotCsv
                 float value = metric.Values[i];
                 if (float.IsNaN(value)) continue;
 
-                text.Append(value.ToString("R", CultureInfo.InvariantCulture));
+                text.Append(value.ToString(ValueFormat, CultureInfo.InvariantCulture));
             }
             text.Append('\n');
         }

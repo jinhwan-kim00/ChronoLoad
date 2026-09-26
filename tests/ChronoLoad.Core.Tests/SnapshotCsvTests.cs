@@ -48,7 +48,7 @@ public class SnapshotCsvTests
 
         Assert.Equal(3, lines.Length);            // 헤더 + 2행
         string expected = new DateTime(At(0), DateTimeKind.Utc).ToLocalTime()
-            .ToString("yyyy-MM-ddTHH:mm:ss.fff");
+            .ToString("yyyy-MM-dd HH:mm:ss.fff");
         Assert.StartsWith(expected + ",", lines[1]);
         Assert.EndsWith(",10", lines[1]);
         Assert.EndsWith(",20", lines[2]);
@@ -70,6 +70,21 @@ public class SnapshotCsvTests
 
         Assert.EndsWith(",10", lines[1]);
         Assert.EndsWith(",", lines[2]);           // 값 자리가 비어 있다
+    }
+
+    /// <summary>
+    /// 엑셀은 <c>T</c> 가 끼면 날짜로 읽지 않고 그냥 글자로 둔다. 밀리초는 남겨야 한다 —
+    /// 250ms 로 재므로 초까지만 적으면 네 줄이 같은 시각이 된다.
+    /// </summary>
+    [Fact]
+    public void The_date_and_the_time_are_separated_by_a_space_not_a_T()
+    {
+        var snapshot = Build(r => r.PushFrame([1f], At(0)));
+        string row = Lines(SnapshotCsv.Build(snapshot, 0, snapshot.Count))[1];
+        string stamp = row[..row.IndexOf(',')];
+
+        Assert.DoesNotContain("T", stamp);
+        Assert.Matches(@"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}$", stamp);
     }
 
     [Fact]
@@ -130,6 +145,22 @@ public class SnapshotCsvTests
 
         string[] lines = Lines(SnapshotCsv.Build(MetricSnapshot.Capture(registry), 0, 1));
         Assert.Equal("timestamp,SSD / DiskQueue", lines[0]);
+    }
+
+    /// <summary>
+    /// 왕복 표기는 큰 수를 1.3421773E+10 로 적는다. 엑셀은 읽지만 사람은 읽지 않는다.
+    /// </summary>
+    [Theory]
+    [InlineData(13421772800f, "13421770000")]   // 12.5GB
+    [InlineData(2.64e9f, "2640000000")]         // 2.64Gbps
+    [InlineData(1e-5f, "0.00001")]              // 디스크 큐 — 0 으로 뭉개지면 안 된다
+    [InlineData(0.3f, "0.3")]                   // float 잡음(0.30000001…)이 새어 나오면 안 된다
+    [InlineData(53.6f, "53.6")]
+    [InlineData(0f, "0")]
+    public void Values_are_written_in_plain_decimal_without_an_exponent(float value, string expected)
+    {
+        var snapshot = Build(r => r.PushFrame([value], At(0)));
+        Assert.EndsWith("," + expected, Lines(SnapshotCsv.Build(snapshot, 0, snapshot.Count))[1]);
     }
 
     [Fact]
