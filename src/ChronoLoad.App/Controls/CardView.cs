@@ -334,6 +334,15 @@ public sealed class CardView : Border
             e.Handled = true;
             ScrubToggle?.Invoke(this, index);
         };
+        // 더블클릭은 시간 폭을 표준으로 되돌린다(§9.4). 첫 클릭이 이미 고정을 토글했으므로
+        // 여기서 한 번 더 토글해 제자리로 돌려놓는다 — 폭만 바뀌고 고정 상태는 그대로다.
+        MouseLeftButtonDown += (_, e) =>
+        {
+            if (e.ClickCount != 2 || !TryIndexAt(e, out int index)) return;
+            e.Handled = true;
+            ScrubToggle?.Invoke(this, index);
+            TimeWidthReset?.Invoke(this);
+        };
 
         // ── 푸터 ─────────────────────────────────────────────
         var footerGrid = new Grid { Height = 20 };
@@ -364,8 +373,33 @@ public sealed class CardView : Border
     public event Action<CardView>? ScrubLeave;
     public event Action<CardView, int>? ScrubToggle;
 
+    /// <summary>차트 더블클릭 — 시간 폭을 표준으로 되돌린다(§9.4).</summary>
+    public event Action<CardView>? TimeWidthReset;
+
     /// <summary>스크럽 인덱스의 범위. 차트가 실제로 그린 점 수다.</summary>
     public int WindowPoints => Math.Max(2, _chart.PointCount);
+
+    /// <summary>
+    /// 수집이 끊긴 자리를 표시할 수 있도록 시간 축을 붙인다(§7.4).
+    /// 붙이지 않으면 차트는 공백을 말하지 않는다.
+    /// </summary>
+    public void UseTimeAxis(MetricRegistry registry, long gapThresholdTicks)
+    {
+        _chart.TimeAxis = registry;
+        _chart.GapThresholdTicks = gapThresholdTicks;
+    }
+
+    /// <summary>
+    /// 표시할 점 수를 정한다. 창이 시간 폭(§9.4)을 시각으로 환산해 넘기므로
+    /// <b>모든 카드가 같은 값</b>을 받는다 — 시간 축이 하나라는 전제(§1.1)다.
+    /// </summary>
+    public void SetWindowPoints(int points)
+    {
+        int clamped = Math.Max(2, points);
+        if (_chart.WindowPoints == clamped) return;
+        _chart.WindowPoints = clamped;
+        _spark.WindowPoints = clamped;
+    }
 
     /// <summary>
     /// 차트 좌우 바깥으로 두는 여유. 이만큼 벗어나도 양 끝 점을 집은 것으로 친다.

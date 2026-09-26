@@ -20,6 +20,10 @@ namespace ChronoLoad.App;
 public partial class MainWindow : Window
 {
     private readonly MetricRegistry _registry;
+
+    // 시간 폭(§9.4). 저장하지 않는다 — 곁눈질 위젯은 늘 같은 자리에 같은 것이 있어야 하는데,
+    // 어제 600초로 두고 껐다는 사실을 기억하지 못한 채 열면 화면이 낯설다.
+    private TimeSpan _timeWidth = TimeWidthLadder.Standard;
     private readonly SampleEngine? _engine;
     private readonly List<CardView> _cards = [];
     private readonly ThemeService _theme = ThemeService.Instance;
@@ -50,8 +54,12 @@ public partial class MainWindow : Window
     private readonly bool _startCollapsed;
     private bool _suppressResizeLayout;
 
+    /// <param name="initialWidth">
+    /// 시간 폭의 시작값. 렌더 테스트가 표준이 아닌 폭을 잡아 보기 위한 자리다 —
+    /// 실제 실행에서는 늘 <see cref="TimeWidthLadder.Standard"/>로 시작한다(저장하지 않는다).
+    /// </param>
     public MainWindow(MetricRegistry registry, SampleEngine? engine, bool startCollapsed = false,
-        int? initialScrub = null)
+        int? initialScrub = null, TimeSpan? initialWidth = null)
     {
         _registry = registry;
         _engine = engine;
@@ -64,6 +72,7 @@ public partial class MainWindow : Window
 
         InitializeComponent();
         BuildChromeIcons();
+        if (initialWidth is { } width) SetTimeWidth(width);
 
         _theme.Changed += ApplyTheme;
         _theme.Apply();
@@ -91,6 +100,7 @@ public partial class MainWindow : Window
 
         _scrub.Changed += ApplyScrub;
         KeyDown += OnKeyDown;
+        PreviewMouseWheel += OnPreviewMouseWheel;
         Loaded += OnLoaded;
 
         if (_engine is not null)
@@ -157,11 +167,17 @@ public partial class MainWindow : Window
         model.UserCollapsed = _settings.Collapsed.GetValueOrDefault(device.Key, _startCollapsed);
 
         var card = new CardView(model) { Margin = new Thickness(0, 0, 0, 8) };
+        // 끊긴 구간을 이어 그리지 않도록 시간 축을 붙인다(§7.4). 문턱은 공칭 주기 기준이다 —
+        // 현재 배속에 맞추면 느려진 상태에서 문턱까지 같이 느슨해져 절전 복귀를 놓친다.
+        card.UseTimeAxis(_registry, SampleGaps.ThresholdFor(
+            _engine?.NominalFastPeriod ?? TimeSpan.FromMilliseconds(250)));
         card.ToggleRequested += OnCardToggled;
         // 맨 오른쪽인지는 그 카드의 점 수로 판정한다 — 카드마다 물어야 정확하다.
         card.ScrubHover += (c, i) => _scrub.Hover(c.Model.Key, i, c.WindowPoints);
         card.ScrubLeave += _ => _scrub.Leave();
         card.ScrubToggle += (c, i) => _scrub.TogglePin(c.Model.Key, i, c.WindowPoints);
+        card.TimeWidthReset += _ => SetTimeWidth(TimeWidthLadder.Standard);
+        card.SetWindowPoints(WindowPointsForWidth());
         return card;
     }
 
@@ -499,6 +515,28 @@ public partial class MainWindow : Window
         RefreshCards();
     }
 
+    /// <summary>지금 시간 폭이 덮는 점 수. 버퍼가 아직 짧으면 가진 만큼이다.</summary>
+    private int WindowPointsForWidth() => Math.Max(2, _registry.PointsWithin(_timeWidth));
+
+    /// <summary>
+    /// 시간 폭을 바꾸고 칩을 갱신한다. 표준이면 칩을 숨긴다 — 기본 상태는 아무 말도 하지 않는다.
+    /// </summary>
+    private void SetTimeWidth(TimeSpan width)
+    {
+        var next = TimeWidthLadder.Nearest(width);
+        if (next == _timeWidth) return;
+        _timeWidth = next;
+
+        bool standard = next == TimeWidthLadder.Standard;
+        TimeWidthChip.Visibility = standard ? Visibility.Collapsed : Visibility.Visible;
+        TimeWidthText.Text = TimeWidthLadder.Label(next);
+
+        // 폭이 바뀌면 점 수가 바뀌고, 고정된 스크럽선이 가리키던 자리도 달라진다.
+        // 어디를 가리키는지 알 수 없게 되느니 놓는 편이 낫다.
+        _scrub.Clear();
+        RefreshCards();
+    }
+
     private void RefreshCards()
     {
         // 스크럽 중에는 오버레이도 매 틱 다시 채운다. 선이 흐르면 패널이 따라가야 하고,
@@ -510,6 +548,11 @@ public partial class MainWindow : Window
             foreach (var card in _cards)
                 card.ApplyScrub(scrub, _scrub.FocusCardKey == card.Model.Key, palette);
         }
+
+        // 폭은 초로 세고 점 개수로 환산한다(§9.4). 배속이 바뀌면 같은 60초가 다른 점 수가 되므로
+        // 한 번 정해 두는 것이 아니라 매 갱신에 다시 묻는다.
+        int points = WindowPointsForWidth();
+        foreach (var card in _cards) card.SetWindowPoints(points);
 
         foreach (var card in _cards) card.Refresh(_registry);
 
@@ -621,6 +664,18 @@ public partial class MainWindow : Window
     }
 
     // ── 키보드 ──────────────────────────────────────────────────
+    /// <summary>
+    /// <c>Ctrl</c>+휠로 시간 폭을 오르내린다(§9.4). 스냅샷 창과 같은 뜻이라 한쪽을 익히면
+    /// 다른 쪽에서도 통한다 — 둘 다 "얼마나 긴 시간을 볼 것인가"다.
+    /// </summary>
+    private void OnPreviewMouseWheel(object sender, MouseWheelEventArgs e)
+    {
+        if ((Keyboard.Modifiers & ModifierKeys.Control) == 0 || e.Delta == 0) return;
+        e.Handled = true;
+        // 위로 굴리면 확대(짧은 폭), 아래로 굴리면 축소(긴 폭). 지도·편집기와 같은 방향이다.
+        SetTimeWidth(TimeWidthLadder.Step(_timeWidth, e.Delta > 0 ? -1 : +1));
+    }
+
     private void OnKeyDown(object sender, KeyEventArgs e)
     {
         bool ctrl = (Keyboard.Modifiers & ModifierKeys.Control) != 0;

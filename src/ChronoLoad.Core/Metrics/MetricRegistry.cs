@@ -516,6 +516,39 @@ public sealed class MetricRegistry
         return 1;
     }
 
+    /// <summary>
+    /// 가장 최근 프레임에서 <paramref name="span"/>만큼 거슬러 올라갈 때 들어오는 프레임 수.
+    /// 시간 폭(§9.4)을 점 개수로 환산한다.
+    /// </summary>
+    /// <remarks>
+    /// 점 개수로 세면 적응형 백오프(§6.3) 구간에서 "60초"가 60초가 아니게 된다.
+    /// 시각으로 잘라야 화면이 늘 같은 길이의 시간을 보여 준다.
+    /// <para>
+    /// 절전으로 끊긴 구간(§13)이 있으면 그 이전 샘플은 자연히 빠진다 — 복귀 직후에는
+    /// 점이 몇 개뿐이겠지만, <b>그것이 실제로 가진 전부</b>다.
+    /// </para>
+    /// </remarks>
+    public int PointsWithin(TimeSpan span)
+    {
+        long frames = Volatile.Read(ref _frames);
+        int available = (int)Math.Min(frames, _capacity);
+        if (available == 0) return 0;
+        if (span <= TimeSpan.Zero) return 1;
+
+        long Stamp(int i) => _stamps[(int)((frames - available + i) % _capacity)];
+
+        long cutoff = Stamp(available - 1) - span.Ticks;
+        int lo = 0, hi = available - 1, first = available - 1;
+        while (lo <= hi)
+        {
+            int mid = lo + (hi - lo) / 2;
+            if (Stamp(mid) >= cutoff) { first = mid; hi = mid - 1; }
+            else lo = mid + 1;
+        }
+
+        return available - first;
+    }
+
     /// <summary>슬롯 하나를 비우고 재사용 대기열에 넣는다. 시리즈·통계·분위수를 모두 지운다.</summary>
     private void ReleaseSlot(int slot)
     {

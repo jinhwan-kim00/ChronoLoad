@@ -95,6 +95,17 @@
         <TextBlock x:Name="ElapsedText" DockPanel.Dock="Left" Margin="8,0,0,0"
                    FontFamily="Cascadia Mono, Consolas" FontSize="13"
                    VerticalAlignment="Center" Foreground="{DynamicResource Brush.Fg}" Text="00:00"/>
+        <!--
+          시간 폭은 표준(60s)이 아닐 때만 말한다(§9.4). 기본 상태에서 자리를 차지하지 않으면서,
+          벗어나 있을 때는 그 사실이 화면에 남아 더블클릭이 무엇을 되돌리는지도 가리킨다.
+        -->
+        <Border x:Name="TimeWidthChip" DockPanel.Dock="Left" Margin="7,0,0,0" Padding="5,1"
+                CornerRadius="5" VerticalAlignment="Center" Visibility="Collapsed"
+                Background="{DynamicResource Brush.Surface2}"
+                BorderThickness="1" BorderBrush="{DynamicResource Brush.Line}">
+          <TextBlock x:Name="TimeWidthText" FontFamily="Cascadia Mono, Consolas" FontSize="10.5"
+                     Foreground="{DynamicResource Brush.Dim}" Text="60s"/>
+        </Border>
         <Button x:Name="CloseButton" Style="{StaticResource ChromeButton}" DockPanel.Dock="Right"/>
         <Button x:Name="MinimizeButton" Style="{StaticResource ChromeButton}" DockPanel.Dock="Right"/>
         <Button x:Name="ThemeButton" Style="{StaticResource ChromeButton}" DockPanel.Dock="Right"/>

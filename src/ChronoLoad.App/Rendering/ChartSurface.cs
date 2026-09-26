@@ -59,11 +59,25 @@ public sealed class ChartSurface : FrameworkElement
     private float[] _secondary = [];
     private float[] _dedicated = [];
     private float[] _shared = [];
+    private long[] _stamps = [];
+    private bool[] _gaps = [];
     private int _primaryCount;
     private int _secondaryCount;
     private int _memoryCount;
+    private int _gapCount;
 
     public MetricSeries? Series { get; set; }
+
+    /// <summary>
+    /// 공백 판정에 쓸 시간 축(§7.4). 지정하지 않으면 공백을 표시하지 않는다.
+    /// </summary>
+    public MetricRegistry? TimeAxis { get; set; }
+
+    /// <summary>
+    /// 이 간격을 넘게 벌어지면 끊긴 것으로 본다. 0 이하면 판정하지 않는다.
+    /// <see cref="ChronoLoad.Core.Layout.SampleGaps.ThresholdFor"/> 참조.
+    /// </summary>
+    public long GapThresholdTicks { get; set; }
 
     /// <summary>미러 차트의 아래쪽, 또는 영역 차트에 얹는 보조 라인(커밋 차지 등).</summary>
     public MetricSeries? SecondarySeries { get; set; }
@@ -177,6 +191,8 @@ public sealed class ChartSurface : FrameworkElement
             else Array.Clear(_shared, 0, points);
         }
 
+        MarkGaps();
+
         double max = ResolveMax();
         LastAxisMax = max;
 
@@ -188,8 +204,47 @@ public sealed class ChartSurface : FrameworkElement
             default: RenderArea(dc, w, h, max); break;
         }
 
+        RenderGapSeams(dc, w, h);
         RenderResetMarkers(dc, w, h, points);
         RenderScrub(dc, w, h, max);
+    }
+
+    /// <summary>
+    /// 그릴 구간의 시각을 떠서 끊긴 자리를 표시한다. 그리는 점 수와 <b>같은 길이</b>로
+    /// 떠야 인덱스가 어긋나지 않는다 — 시각도 시리즈도 "최신 N개"라 끝이 같다(§7.4).
+    /// </summary>
+    private void MarkGaps()
+    {
+        _gapCount = 0;
+        if (TimeAxis is null || GapThresholdTicks <= 0 || _primaryCount < 2) return;
+
+        if (_stamps.Length < _primaryCount) _stamps = new long[_primaryCount];
+        if (_gaps.Length < _primaryCount) _gaps = new bool[_primaryCount];
+
+        int copied = TimeAxis.CopyTimestamps(_stamps.AsSpan(0, _primaryCount));
+        if (copied < _primaryCount) return;   // 축이 아직 짧다 — 어긋나게 그리느니 말하지 않는다
+
+        _gapCount = SampleGaps.Mark(_stamps.AsSpan(0, _primaryCount), GapThresholdTicks,
+                                    _gaps.AsSpan(0, _primaryCount));
+    }
+
+    private bool BreaksBefore(int index) => _gapCount > 0 && index > 0 && _gaps[index];
+
+    /// <summary>
+    /// 공백의 이음매. 폭이 없으므로 <b>두 줄</b>로 긋는다 — 한 줄이면 리셋 마커(§7.3)와 같아 보인다.
+    /// </summary>
+    private void RenderGapSeams(DrawingContext dc, double w, double h)
+    {
+        if (_gapCount == 0) return;
+        var pen = Pen(Palette.Faint, 1, 0xB0);
+
+        for (int i = 1; i < _primaryCount; i++)
+        {
+            if (!_gaps[i]) continue;
+            double mid = (X(i - 1, w) + X(i, w)) / 2;
+            dc.DrawLine(pen, new Point(Math.Round(mid - 1.5) + 0.5, 0), new Point(Math.Round(mid - 1.5) + 0.5, h));
+            dc.DrawLine(pen, new Point(Math.Round(mid + 1.5) + 0.5, 0), new Point(Math.Round(mid + 1.5) + 0.5, h));
+        }
     }
 
     /// <summary>
@@ -297,6 +352,14 @@ public sealed class ChartSurface : FrameworkElement
                 {
                     if (open) { ctx.LineTo(new Point(x, bottom), false, false); open = false; }
                     continue;
+                }
+
+                // 끊긴 자리에서는 채움도 바닥으로 내려 닫는다. 이어 두면 선만 끊기고
+                // 색은 이어져 "값이 이렇게 흘렀다"는 인상이 그대로 남는다.
+                if (open && BreaksBefore(i))
+                {
+                    ctx.LineTo(new Point(X(i - 1, w), bottom), false, false);
+                    open = false;
                 }
 
                 if (!open)
@@ -499,7 +562,8 @@ public sealed class ChartSurface : FrameworkElement
             for (int i = 0; i < count; i++)
             {
                 float v = buffer[i];
-                if (float.IsNaN(v)) { open = false; continue; }   // 공백 구간은 선을 끊는다
+                if (float.IsNaN(v)) { open = false; continue; }   // 값이 없는 구간은 선을 끊는다
+                if (BreaksBefore(i)) open = false;                // 수집이 끊긴 자리도 잇지 않는다
 
                 var point = new Point(X(i, w), y(v));
                 if (!open) { ctx.BeginFigure(point, false, false); open = true; }

@@ -166,6 +166,13 @@ public sealed class SampleEngine : IAsyncDisposable
     /// <summary>지금 적용 중인 Fast 티어 주기.</summary>
     public TimeSpan EffectiveFastPeriod => _options.FastPeriod * (int)EffectivePace;
 
+    /// <summary>
+    /// 배속을 적용하지 <b>않은</b> Fast 주기. "정상 간격"의 기준이 필요한 곳이 쓴다 —
+    /// 공백 판정 문턱(§7.4)을 현재 배속에 맞추면, 느려진 상태에서 문턱까지 같이 느슨해져
+    /// 정작 절전 복귀를 놓친다.
+    /// </summary>
+    public TimeSpan NominalFastPeriod => _options.FastPeriod;
+
     public IReadOnlyList<string> DisabledProviders
     {
         get

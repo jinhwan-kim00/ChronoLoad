@@ -27,11 +27,16 @@ public partial class App : Application
         if (renderTestIndex >= 0 && renderTestIndex + 1 < e.Args.Length)
         {
             int scrubIndex = Array.FindIndex(e.Args, a => a == "--scrub");
+            int widthIndex = Array.FindIndex(e.Args, a => a == "--width");
+            TimeSpan? width = widthIndex >= 0 && widthIndex + 1 < e.Args.Length
+                && double.TryParse(e.Args[widthIndex + 1], out double seconds)
+                ? TimeSpan.FromSeconds(seconds) : null;
             int? scrub = scrubIndex >= 0 && scrubIndex + 1 < e.Args.Length
                          && int.TryParse(e.Args[scrubIndex + 1], out int v) ? v : null;
             RunRenderTest(e.Args[renderTestIndex + 1], e.Args.Contains("--light"),
                 e.Args.Contains("--collapsed"), scrub, e.Args.Contains("--hotplug"),
-                e.Args.Contains("--about"), e.Args.Contains("--scrub-drift"));
+                e.Args.Contains("--about"), e.Args.Contains("--scrub-drift"),
+                e.Args.Contains("--gap"), width);
             return;
         }
 
@@ -106,7 +111,8 @@ public partial class App : Application
     /// 설계서 §15의 골든 이미지 비교가 쓸 기반이자, 지금은 렌더러를 눈으로 확인하는 수단이다.
     /// </summary>
     private void RunRenderTest(string outputPath, bool light, bool collapsed, int? scrubIndex = null,
-                               bool hotPlug = false, bool about = false, bool scrubDrift = false)
+                               bool hotPlug = false, bool about = false, bool scrubDrift = false,
+                               bool gap = false, TimeSpan? width = null)
     {
         // 렌더 테스트는 합성 장치를 쓴다. 실제 설정 폴더를 그대로 쓰면 사용자의 창 위치를
         // 읽어 와 그림이 달라지고, 끝낼 때 gpu:demo 같은 가짜 장치 키를 사용자 파일에 남긴다.
@@ -116,7 +122,7 @@ public partial class App : Application
 
         ThemeService.Instance.Mode = light ? AppTheme.Light : AppTheme.Dark;
 
-        var registry = BuildSyntheticRegistry();
+        var registry = BuildSyntheticRegistry(gap);
 
         // 대기 표시(§6.3)를 렌더 테스트에서도 볼 수 있게 한 장치를 재워 둔다.
         // 실기기에서는 외장 GPU 가 유휴일 때 이 상태가 된다.
@@ -127,7 +133,7 @@ public partial class App : Application
         // 엔진 없이 검사하면 실제와 다른 경로를 보게 된다. 루프는 돌리지 않고 틱만 손으로 민다.
         var engine = hotPlug || scrubDrift ? new SampleEngine(registry) : null;
 
-        var window = new MainWindow(registry, engine, collapsed, scrubIndex)
+        var window = new MainWindow(registry, engine, collapsed, scrubIndex, width)
         {
             Left = -10_000,
             Top = -10_000,
@@ -288,7 +294,11 @@ public partial class App : Application
     /// <summary>
     /// 센서 없이 렌더러를 구동하기 위한 합성 데이터. 영역·미러·스파크라인 세 모드를 모두 태운다.
     /// </summary>
-    private static MetricRegistry BuildSyntheticRegistry()
+    /// <param name="gap">
+    /// 중간에 2분짜리 절전을 끼워 넣는다. 공백은 폭이 없고 <b>이음매</b>로만 보이므로(§7.4)
+    /// 값을 눈으로 확인하려면 일부러 만들어 봐야 한다.
+    /// </param>
+    private static MetricRegistry BuildSyntheticRegistry(bool gap = false)
     {
         const int Points = 240;
         const double TotalMemory = 32L * 1024 * 1024 * 1024;
@@ -350,6 +360,10 @@ public partial class App : Application
             [MetricKind.GpuUtil]);
 
         var frame = new float[registry.SlotCount];
+        // 합성 데이터에도 시간 축을 준다. 기본값(지금 시각)으로 밀어 넣으면 프레임 간격이
+        // 사실상 0 이라 공백 판정이 아무 의미도 갖지 못한다.
+        long stamp = new DateTime(2026, 9, 26, 14, 32, 7, DateTimeKind.Utc).Ticks;
+        long step = TimeSpan.FromMilliseconds(250).Ticks;
         double cpuValue = 34, memRatio = 0.52, rx = 0, tx = 0, gpuValue = 62, phase = 0;
         double dedicated = 9.0 * 1024 * 1024 * 1024, dedicatedTarget = dedicated, shared = 0, npuValue = 12;
 
@@ -387,7 +401,12 @@ public partial class App : Application
             frame[gpu.SlotOf(MetricKind.GpuShared)] = (float)shared;
             frame[npu.SlotOf(MetricKind.GpuUtil)] = (float)npuValue;
 
-            registry.PushFrame(frame);
+            // 절전은 샘플을 남기지 않는다 — 시각만 건너뛰고 값은 그대로 이어진다.
+            if (gap && (i == (int)(Points * 0.45) || i == (int)(Points * 0.8)))
+                stamp += TimeSpan.FromMinutes(2).Ticks;
+
+            registry.PushFrame(frame, stamp);
+            stamp += step;
         }
 
         return registry;
