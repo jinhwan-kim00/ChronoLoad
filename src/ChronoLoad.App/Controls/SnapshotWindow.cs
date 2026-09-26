@@ -447,26 +447,67 @@ public sealed class SnapshotWindow : Window
         Refresh();
     }
 
+    /// <summary>
+    /// 선택이 있으면 <b>저장 대화상자 안에서</b> 어느 쪽을 낼지 고른다.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 요약 띠는 선택을 따라가는데 파일은 늘 크롭 구간이 나가면, 화면에서 읽은 숫자와 파일 속
+    /// 숫자가 말없이 달라진다. 그렇다고 저장 전에 확인 창을 하나 더 띄우면 선택이 있을 때마다
+    /// 누를 것이 는다 — 고르는 자리는 어차피 열리는 대화상자 안에 있으면 된다.
+    /// </para>
+    /// <para>
+    /// <b>파일 형식 자리를 범위 선택으로 쓴다.</b> <c>IFileDialogCustomize</c> 로 체크박스를
+    /// 다는 길도 있으나 WPF 의 <c>SaveFileDialog</c> 가 그것을 열어 주지 않아 COM 선언을 따로
+    /// 들여야 하고, 여기서 고를 것은 둘뿐이다. 확장자는 어느 쪽이든 <c>.csv</c> 다.
+    /// </para>
+    /// </remarks>
     private void Export()
     {
-        var (from, to) = Domain;
+        // 선택이 크롭 구간과 같으면 고를 것이 없다.
+        (int From, int To)[] ranges = Selection is { } selection && selection != Domain
+            ? [selection, Domain]
+            : [Domain];
+
+        string suggested = SnapshotCsv.SuggestFileName(_snapshot, ranges[0].From, ranges[0].To);
         var dialog = new Microsoft.Win32.SaveFileDialog
         {
-            FileName = SnapshotCsv.SuggestFileName(_snapshot, from, to),
+            FileName = suggested,
             DefaultExt = ".csv",
-            Filter = "CSV 파일|*.csv",
+            Filter = ranges.Length == 1
+                ? "CSV 파일 (*.csv)|*.csv"
+                : $"선택 구간만 — {Extent(ranges[0])} (*.csv)|*.csv"
+                  + $"|크롭 구간 전체 — {Extent(ranges[1])} (*.csv)|*.csv",
         };
 
         if (dialog.ShowDialog(this) != true) return;
+
+        var (from, to) = ranges[Math.Clamp(dialog.FilterIndex - 1, 0, ranges.Length - 1)];
+        string path = dialog.FileName;
+
+        // 이름을 건드리지 않은 채 범위만 바꿨으면 이름도 따라간다 — 그러지 않으면 파일명 끝의
+        // 길이가 내용과 어긋난 채 남는다. 손댄 이름은 그대로 존중한다.
+        if (Path.GetFileName(path) == suggested && (from, to) != ranges[0])
+            path = Path.Combine(Path.GetDirectoryName(path) ?? "",
+                                SnapshotCsv.SuggestFileName(_snapshot, from, to));
+
         try
         {
-            SnapshotCsv.Save(_snapshot, from, to, dialog.FileName);
+            SnapshotCsv.Save(_snapshot, from, to, path);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             MessageBox.Show(this, $"저장하지 못했다.\n{ex.Message}", "ChronoLoad",
                 MessageBoxButton.OK, MessageBoxImage.Warning);
         }
+    }
+
+    /// <summary>범위를 대화상자에 적을 한 줄로. 예 <c>14:32:07~14:33:41 · 94초</c>.</summary>
+    private string Extent((int From, int To) range)
+    {
+        var start = Local(range.From);
+        var end = Local(range.To - 1);
+        return $"{start:HH:mm:ss}~{end:HH:mm:ss} · {Describe(end - start)}";
     }
 
     internal void BeginSelect(SnapshotChart chart, double x)
