@@ -298,6 +298,9 @@ public partial class App : Application
             Left = -10_000,
             Top = -10_000,
             ShowActivated = false,
+            // 기본 높이는 작업 영역에 맞춰 줄어드는데, 캡처로 보려는 것은 <b>내용 전부</b>다.
+            // 여기서만 늘려 마지막 장치까지 한 장에 담는다.
+            Height = 1180,
         };
         window.Show();
 

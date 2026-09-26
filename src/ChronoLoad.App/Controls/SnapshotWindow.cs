@@ -8,6 +8,7 @@ using ChronoLoad.App.Rendering;
 using ChronoLoad.App.Services;
 using ChronoLoad.Core.Devices;
 using ChronoLoad.Core.Formatting;
+using ChronoLoad.Core.Layout;
 using ChronoLoad.Core.Metrics;
 
 namespace ChronoLoad.App.Controls;
@@ -705,6 +706,11 @@ public sealed class SnapshotWindow : Window
         private readonly Border _overlay;
         private readonly StackPanel _overlayRows;
 
+        /// <summary>메모리 판인가. 축 규칙과 용량선이 다르다(§8.3).</summary>
+        private readonly bool _memory;
+        private readonly bool _discrete;
+        private readonly double _dedicatedCapacity, _sharedCapacity;
+
         public SnapshotChart Chart { get; }
         public Grid Body { get; }
 
@@ -717,6 +723,14 @@ public sealed class SnapshotWindow : Window
             _palette = palette;
             _accent = accent;
 
+            // 용량은 시계열이 아니라 장치의 부가 정보로 온다 — 스냅샷이 장치 정보를 통째로
+            // 들고 있으므로 따로 실어 나를 것이 없다(`CardFactory` 와 같은 키를 읽는다).
+            _memory = primary.Kind == MetricKind.GpuDedicated;
+            var extra = primary.Device.Extra;
+            _discrete = extra.GetValueOrDefault("discrete") == "true";
+            _dedicatedCapacity = Bytes(extra.GetValueOrDefault("dedicatedBytes"));
+            _sharedCapacity = Bytes(extra.GetValueOrDefault("sharedBytes"));
+
             Chart = new SnapshotChart
             {
                 Height = height,
@@ -727,6 +741,9 @@ public sealed class SnapshotWindow : Window
                 Metric = primary,
                 Secondary = secondary,
                 FixedMax = 100,
+                Stacked = _memory,
+                Discrete = _discrete,
+                CapacityLine = _memory ? _dedicatedCapacity : 0,
             };
             Chart.MouseLeftButtonDown += (_, e) =>
             {
@@ -892,7 +909,15 @@ public sealed class SnapshotWindow : Window
             return row;
         }
 
-        /// <summary>퍼센트는 0~100 고정, 나머지는 보이는 구간의 최고치에 여유를 얹는다.</summary>
+        /// <summary>
+        /// 퍼센트는 0~100 고정, 메모리는 <b>용량 기준</b>(§8.3), 나머지는 보이는 구간의
+        /// 최고치에 여유를 얹는다.
+        /// </summary>
+        /// <remarks>
+        /// 메모리를 최고치에 맞춰 움직이면 1GB 를 쓰든 7GB 를 쓰든 영역 높이가 같아져
+        /// "얼마나 잡고 있고 얼마나 남았는가"를 읽을 수 없다. 그 판단은 그리기가 아니므로
+        /// <c>Core</c> 의 <see cref="GpuMemoryAxis"/> 가 갖고 있고, 메인 창과 같은 것을 쓴다.
+        /// </remarks>
         private double Resolve(int viewStart, int viewCount)
         {
             if (_primary.Unit == MetricUnit.Percent) return 100;
@@ -902,11 +927,20 @@ public sealed class SnapshotWindow : Window
             double peak = 0;
             for (int i = from; i < to; i++)
             {
-                peak = Math.Max(peak, Finite(_primary.Values[i]));
-                if (_secondary is not null) peak = Math.Max(peak, Finite(_secondary.Values[i]));
+                // 쌓아 그리므로 최고치도 <b>합계</b>로 잰다. 따로 재면 축이 낮게 잡혀 띠가 잘린다.
+                double at = Finite(_primary.Values[i]);
+                if (_secondary is not null)
+                    at = _memory ? at + Finite(_secondary.Values[i])
+                                 : Math.Max(at, Finite(_secondary.Values[i]));
+                peak = Math.Max(peak, at);
             }
+
+            if (_memory) return GpuMemoryAxis.Max(_discrete, _dedicatedCapacity, _sharedCapacity, peak);
             return peak > 0 ? peak * 1.08 : 1;
         }
+
+        private static double Bytes(string? text) =>
+            double.TryParse(text, out double value) ? value : 0;
 
         private static double Finite(float v) => float.IsNaN(v) ? 0 : v;
 

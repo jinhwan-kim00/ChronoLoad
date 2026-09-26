@@ -26,6 +26,7 @@ public sealed class SnapshotChart : FrameworkElement
     private readonly StreamGeometry _fill = new();
     private readonly StreamGeometry _line = new();
     private readonly StreamGeometry _secondLine = new();
+    private readonly StreamGeometry _band = new();
 
     public SnapshotMetric? Metric { get; set; }
 
@@ -60,6 +61,22 @@ public sealed class SnapshotChart : FrameworkElement
     public IReadOnlyList<double> TimeTicks { get; set; } = [];
 
     public long GapThresholdTicks { get; set; }
+
+    /// <summary>
+    /// 둘째 계열을 첫째 <b>위에 쌓는다</b>(메인 창의 GPU 메모리와 같은 규칙, §8.3).
+    /// </summary>
+    /// <remarks>
+    /// 메모리는 파형이 아니라 점유량이다. 전용과 공유를 따로 그으면 "합쳐서 얼마나 잡고 있나"를
+    /// 눈으로 더해야 하는데, 그것이 바로 보려던 값이다. 전용을 바닥에 깔고 공유를 그 위에 얹으면
+    /// 띠의 윗변이 곧 합계다.
+    /// </remarks>
+    public bool Stacked { get; set; }
+
+    /// <summary>전용 VRAM 용량선을 그을 자리(바이트). 0 이면 긋지 않는다.</summary>
+    public double CapacityLine { get; set; }
+
+    /// <summary>외장 GPU 인가. 외장에서만 공유 메모리가 경고색이 된다.</summary>
+    public bool Discrete { get; set; }
 
     /// <summary>이번에 쓴 축 상한. 홈통 라벨이 읽어 간다.</summary>
     public double AxisMax { get; private set; } = 100;
@@ -98,15 +115,111 @@ public sealed class SnapshotChart : FrameworkElement
 
         double Y(float v) => h - Math.Clamp(v / AxisMax, 0, 1) * (h - 2) - 1;
 
-        FillArea(dc, w, h, from, to, Y);
-        DrawSeries(dc, _line, Metric, from, to, w, Y, Pen(Accent, 1.5, 0xFF));
-        if (Secondary is not null)
-            DrawSeries(dc, _secondLine, Secondary, from, to, w, Y, Pen(Accent, 1.2, 0x88));
+        if (Stacked && Secondary is not null) DrawStacked(dc, w, h, from, to, Y);
+        else
+        {
+            FillArea(dc, w, h, from, to, Y);
+            DrawSeries(dc, _line, Metric, from, to, w, Y, Pen(Accent, 1.5, 0xFF));
+            if (Secondary is not null)
+                DrawSeries(dc, _secondLine, Secondary, from, to, w, Y, Pen(Accent, 1.2, 0x88));
+        }
 
         DrawGapSeams(dc, w, h, from, to);
         DrawScrub(dc, h, from, to, Y);
     }
 
+
+    /// <summary>
+    /// 전용을 바닥에 깔고 공유를 그 위에 얹는다. 용량선은 넘친 구간이 있으면 경고색이다.
+    /// </summary>
+    /// <remarks>
+    /// 공유 띠는 색이 아니라 <b>해치 패턴</b>으로도 구분한다 — 색약 사용자를 배려한 것으로,
+    /// 메인 창과 같은 처리다. 외장에서 공유가 쓰인다는 것 자체가 전용 밖으로 나갔다는 뜻이라
+    /// 양과 무관하게 눈에 띄는 색을 쓴다. 내장은 공유가 정상 경로이므로 평소 색 그대로다.
+    /// </remarks>
+    private void DrawStacked(DrawingContext dc, double w, double h, int from, int to, Func<float, double> y)
+    {
+        var shared = Secondary!;
+        float Sum(int i) => Finite(Metric!.Values[i]) + Finite(shared.Values[i]);
+
+        // 전용 — 뒤쪽·저채도.
+        FillArea(dc, w, h, from, to, y);
+        DrawSeries(dc, _line, Metric!, from, to, w, y, Pen(Accent, 1, 0x77));
+
+        var hatchColor = Discrete ? Palette.Warn : Accent;
+        _band.Clear();
+        using (var ctx = _band.Open())
+        {
+            int start = from;
+            while (start < to)
+            {
+                int end = start + 1;
+                while (end < to && !BreaksBefore(end)) end++;
+
+                if (end - start >= 2)
+                {
+                    ctx.BeginFigure(new Point(XOf(start), y(Sum(start))), true, true);
+                    for (int i = start + 1; i < end; i++) ctx.LineTo(new Point(XOf(i), y(Sum(i))), true, true);
+                    for (int i = end - 1; i >= start; i--)
+                        ctx.LineTo(new Point(XOf(i), y(Finite(Metric!.Values[i]))), true, true);
+                }
+                start = end;
+            }
+        }
+        dc.DrawGeometry(Hatch(hatchColor, 0x99), null, _band);
+
+        // 합계선 — 띠의 윗변이 곧 "합쳐서 얼마나 잡고 있나"다.
+        _secondLine.Clear();
+        using (var ctx = _secondLine.Open())
+        {
+            bool open = false;
+            for (int i = from; i < to; i++)
+            {
+                if (BreaksBefore(i)) open = false;
+                var point = new Point(XOf(i), y(Sum(i)));
+                if (!open) { ctx.BeginFigure(point, false, false); open = true; }
+                else ctx.LineTo(point, true, true);
+            }
+        }
+        dc.DrawGeometry(null, Pen(hatchColor, 1, 0x88), _secondLine);
+
+        if (CapacityLine <= 0 || !Discrete) return;
+
+        // 전용 용량선 — 넘으면 시스템 RAM 스필오버다. 여기서는 "지금 넘쳤나"가 아니라
+        // <b>보고 있는 구간에 넘긴 적이 있나</b>로 판정한다. 흐름이 멈춘 창이라 그것이 읽을 값이다.
+        bool spilled = false;
+        for (int i = from; i < to && !spilled; i++) spilled = Sum(i) > CapacityLine;
+
+        double capY = Math.Max(y((float)CapacityLine), 1);
+        dc.DrawLine(Dashed(spilled ? Palette.Warn : Accent, 1.3, spilled ? (byte)0xFF : (byte)0x99),
+                    new Point(0, Math.Round(capY) + 0.5), new Point(w, Math.Round(capY) + 0.5));
+    }
+
+    private static float Finite(float v) => float.IsNaN(v) ? 0 : v;
+
+    /// <summary>해치 브러시. 메인 창(<see cref="ChartSurface"/>)과 같은 각·간격이다.</summary>
+    private static Brush Hatch(Color color, byte alpha)
+    {
+        var lines = new GeometryGroup();
+        lines.Children.Add(new LineGeometry(new Point(-2, 6), new Point(6, -2)));
+        lines.Children.Add(new LineGeometry(new Point(1, 9), new Point(9, 1)));
+
+        var stroke = new SolidColorBrush(Color.FromArgb(alpha, color.R, color.G, color.B));
+        stroke.Freeze();
+        var pen = new Pen(stroke, 1.6);
+        pen.Freeze();
+
+        var brush = new DrawingBrush(new GeometryDrawing(null, pen, lines))
+        {
+            TileMode = TileMode.Tile,
+            Viewport = new Rect(0, 0, 8, 8),
+            ViewportUnits = BrushMappingMode.Absolute,
+            ViewboxUnits = BrushMappingMode.Absolute,
+            Viewbox = new Rect(0, 0, 8, 8),
+        };
+        brush.Freeze();
+        return brush;
+    }
 
     private void DrawGrid(DrawingContext dc, double w, double h)
     {
