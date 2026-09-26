@@ -2,7 +2,7 @@
 
 > GPU 워크로드 중심의 실시간 시스템 모니터. WPF 세로형 위젯 + MCP 서버.
 
-- **문서 버전**: 1.24 — 개정 이력은 [`CHANGE_LOG.md`](CHANGE_LOG.md)
+- **문서 버전**: 1.25 — 개정 이력은 [`CHANGE_LOG.md`](CHANGE_LOG.md)
 - **최초 작성**: 2026-09-23 · **최종 갱신**: 2026-09-26
 - **대상 런타임**: .NET 10 (`net10.0-windows`), Windows 10 20H2 이상 / Windows 11
 - **UX 시각 설계서**: [`docs/ux-design.html`](docs/ux-design.html) — 브라우저로 열면 라이브 목업이 동작합니다
@@ -1189,7 +1189,7 @@ public sealed class ScrubState : ObservableObject   // 앱 전역 단일 인스�
 | 항목 | 결정 | 이유 |
 |---|---|---|
 | 모달리스, 여러 개 | 허용 | 테스트 A·B 를 나란히 놓고 비교하는 것이 이 기능의 주 용도다 |
-| 타이틀 | **데이터 시작 시각 + 길이** (예 `14:32:07 부터 15분`) | 창이 여러 개일 때 무엇이 언제 남긴 것인지는 타이틀에서만 갈린다 |
+| 타이틀 | **데이터 시작 시각 + 길이 + 표본 수** (예 `ChronoLoad — 14:32:07 부터 15분 · 3,600 샘플`) | 창이 여러 개일 때 무엇이 언제 남긴 것인지는 타이틀에서만 갈린다. 창 안에 같은 줄을 또 두지 않는다 — 제목 표시줄 바로 아래 같은 글이 겹쳐 보이고, 그 34dip 은 차트가 쓰는 편이 낫다 |
 | 메인 창과의 연동 | 없음 | 메인 창의 리셋·장치 변경·테마 외 모든 것이 스냅샷에 닿지 않는다. 테마만 따라간다 |
 | 영속성 | 없음 | 앱을 닫으면 사라진다. 남기려면 CSV 로 낸다 |
 
@@ -1205,7 +1205,7 @@ public sealed class ScrubState : ObservableObject   // 앱 전역 단일 인스�
 | 속성 | 값 |
 |---|---|
 | `DWMWA_USE_IMMERSIVE_DARK_MODE` (20) | 다크 팔레트일 때 1 |
-| `DWMWA_CAPTION_COLOR` (35) | `Surface` — 바로 아래 헤더 띠와 같은 색이라 두 줄이 한 덩어리로 읽힌다 |
+| `DWMWA_CAPTION_COLOR` (35) | 창에서 **바로 아래에 오는 것**과 같은 색. 스냅샷 창은 툴바이므로 `Surface2` — 두 줄이 한 덩어리로 읽힌다 |
 | `DWMWA_TEXT_COLOR` (36) | `Fg` |
 | `DWMWA_BORDER_COLOR` (34) | `Line` |
 

@@ -67,7 +67,9 @@ public sealed class SnapshotWindow : Window
         var palette = _palette = ThemeService.Instance.Palette;
 
         Owner = owner;
-        Title = $"ChronoLoad — {snapshot.StartedLocal:HH:mm:ss}";
+        // 창이 여럿일 때 무엇이 언제 남긴 것인지는 제목에서만 갈린다(§9.6).
+        Title = $"ChronoLoad — {snapshot.StartedLocal:HH:mm:ss} 부터 "
+              + $"{Describe(snapshot.Span)} · {snapshot.Count:N0} 샘플";
         Width = 900;
         Height = 620;
         MinWidth = 520;
@@ -78,8 +80,6 @@ public sealed class SnapshotWindow : Window
         Topmost = owner.Topmost;
 
         var root = new DockPanel { LastChildFill = true };
-        root.Children.Add(Header(palette));
-        DockPanel.SetDock(root.Children[^1], Dock.Top);
 
         var toolbar = Toolbar(palette, out _fitButton, out _cropButton, out _undoButton, out _exportButton);
         DockPanel.SetDock(toolbar, Dock.Top);
@@ -111,7 +111,9 @@ public sealed class SnapshotWindow : Window
     protected override void OnSourceInitialized(EventArgs e)
     {
         base.OnSourceInitialized(e);
-        WindowFrame.Apply(this, _palette, ReferenceEquals(_palette, ThemePalette.Dark));
+        // 캡션 바로 아래는 이제 툴바다. 두 줄이 한 덩어리로 읽히도록 색을 맞춘다.
+        WindowFrame.Apply(this, _palette, _palette.Surface2,
+                          ReferenceEquals(_palette, ThemePalette.Dark));
     }
 
     protected override void OnClosing(CancelEventArgs e)
@@ -151,33 +153,6 @@ public sealed class SnapshotWindow : Window
         _selectA is { } a && _selectB == a ? a : null;
 
     // ── 뼈대 ─────────────────────────────────────────────────
-
-    private UIElement Header(ThemePalette palette)
-    {
-        var strip = new DockPanel
-        {
-            Height = 34,
-            Background = new SolidColorBrush(palette.Surface),
-            LastChildFill = false,
-        };
-
-        // 앱 이름은 적지 않는다. 바로 위 제목 표시줄에 이미 있다.
-        var started = Mono($"{_snapshot.StartedLocal:HH:mm:ss}", 12.5, palette.Fg);
-        started.FontWeight = FontWeights.SemiBold;
-        started.Margin = new Thickness(12, 0, 0, 0);
-        strip.Children.Add(started);
-        strip.Children.Add(Text(
-            $"부터 {Describe(_snapshot.Span)} · {_snapshot.Count:N0} 샘플", 11.5, palette.Dim,
-            FontWeights.Normal, new Thickness(7, 0, 0, 0)));
-
-        strip.Children.Add(new Border
-        {
-            Height = 1,
-            Background = new SolidColorBrush(palette.Line),
-            VerticalAlignment = VerticalAlignment.Bottom,
-        });
-        return strip;
-    }
 
     private Border Toolbar(ThemePalette palette, out Border fit, out Border crop,
                            out Border undo, out Border export)

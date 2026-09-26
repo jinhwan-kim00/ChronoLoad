@@ -15,6 +15,7 @@ namespace ChronoLoad.App.Services;
 /// 그러면 다크 테마에서 <b>제목 표시줄만 하얗게</b> 남는다 — DWM 에 색을 알려 주면 된다.
 /// </para>
 /// <para>
+/// 캡션은 창에서 바로 아래에 오는 것과 같은 색으로 칠한다 — 두 줄이 한 덩어리로 읽혀야 한다.
 /// 캡션 색·글자 색·테두리 색(34~36)은 Windows 11 부터다. 그 이전에서는 실패 코드가
 /// 돌아오므로 다크 모드 플래그(20)만 걸리고, 그 편이 Windows 10 의 기본 어두운 캡션이다.
 /// 어느 쪽이든 실패를 막을 방법이 없고 막을 이유도 없다 — 색이 조금 다를 뿐이다.
@@ -33,7 +34,8 @@ internal static partial class WindowFrame
     /// <summary>
     /// <see cref="Window.SourceInitialized"/> 이후에 부른다. 그 전에는 핸들이 없다.
     /// </summary>
-    public static void Apply(Window window, ThemePalette palette, bool dark)
+    /// <param name="caption">캡션에 칠할 색. 창에서 <b>바로 아래에 오는 것</b>과 같은 색을 준다.</param>
+    public static void Apply(Window window, ThemePalette palette, Color caption, bool dark)
     {
         nint hwnd = new WindowInteropHelper(window).Handle;
         if (hwnd == 0) return;
@@ -41,8 +43,7 @@ internal static partial class WindowFrame
         int flag = dark ? 1 : 0;
         DwmSetWindowAttribute(hwnd, UseImmersiveDarkMode, in flag, sizeof(int));
 
-        // 캡션은 바로 아래 헤더 띠와 같은 색이다. 두 줄이 한 덩어리로 읽혀야 한다.
-        Set(hwnd, CaptionColor, palette.Surface);
+        Set(hwnd, CaptionColor, caption);
         Set(hwnd, TextColor, palette.Fg);
         Set(hwnd, BorderColor, palette.Line);
     }
