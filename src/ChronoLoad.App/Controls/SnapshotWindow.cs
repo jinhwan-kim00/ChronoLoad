@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
@@ -52,6 +53,9 @@ public sealed class SnapshotWindow : Window
     private int _viewStart, _viewCount;
     private int? _selectA, _selectB;
     private bool _dragging;
+
+    /// <summary>닫히는 시점에 이 창이 활성이었는가. 그때만 소유 창으로 활성을 돌려준다.</summary>
+    private bool _activeWhenClosing;
 
     public SnapshotWindow(Window owner, MetricSnapshot snapshot, long gapThresholdTicks)
     {
@@ -108,6 +112,27 @@ public sealed class SnapshotWindow : Window
     {
         base.OnSourceInitialized(e);
         WindowFrame.Apply(this, _palette, ReferenceEquals(_palette, ThemePalette.Dark));
+    }
+
+    protected override void OnClosing(CancelEventArgs e)
+    {
+        base.OnClosing(e);
+        _activeWhenClosing = IsActive;
+    }
+
+    /// <summary>
+    /// 활성을 소유 창에 돌려준다.
+    /// </summary>
+    /// <remarks>
+    /// 저장 대화상자를 한 번 띄우고 나서 이 창을 닫으면 메인 창이 다른 앱 뒤로 가라앉는다는
+    /// 보고가 있었다. 창 하나짜리 재현 하네스로는 재현되지 않아 정확한 경로는 못 짚었지만,
+    /// 이 창이 활성인 채로 닫혔으면 활성이 소유 창으로 가는 것이 어차피 맞는 동작이다.
+    /// 활성이 아니었으면 건드리지 않는다 — 다른 앱을 쓰던 사람의 앞창을 빼앗게 된다.
+    /// </remarks>
+    protected override void OnClosed(EventArgs e)
+    {
+        base.OnClosed(e);
+        if (_activeWhenClosing && Owner is { IsLoaded: true } owner) owner.Activate();
     }
 
     /// <summary>지금 분석 도메인. 요약도 내보내기도 이 범위만 본다.</summary>
@@ -448,46 +473,33 @@ public sealed class SnapshotWindow : Window
     }
 
     /// <summary>
-    /// 선택이 있으면 <b>저장 대화상자 안에서</b> 어느 쪽을 낼지 고른다.
+    /// 선택이 있으면 <b>저장 대화상자 안의 체크 상자</b>로 어느 쪽을 낼지 고른다.
     /// </summary>
     /// <remarks>
-    /// <para>
     /// 요약 띠는 선택을 따라가는데 파일은 늘 크롭 구간이 나가면, 화면에서 읽은 숫자와 파일 속
     /// 숫자가 말없이 달라진다. 그렇다고 저장 전에 확인 창을 하나 더 띄우면 선택이 있을 때마다
     /// 누를 것이 는다 — 고르는 자리는 어차피 열리는 대화상자 안에 있으면 된다.
-    /// </para>
-    /// <para>
-    /// <b>파일 형식 자리를 범위 선택으로 쓴다.</b> <c>IFileDialogCustomize</c> 로 체크박스를
-    /// 다는 길도 있으나 WPF 의 <c>SaveFileDialog</c> 가 그것을 열어 주지 않아 COM 선언을 따로
-    /// 들여야 하고, 여기서 고를 것은 둘뿐이다. 확장자는 어느 쪽이든 <c>.csv</c> 다.
-    /// </para>
     /// </remarks>
     private void Export()
     {
         // 선택이 크롭 구간과 같으면 고를 것이 없다.
-        (int From, int To)[] ranges = Selection is { } selection && selection != Domain
-            ? [selection, Domain]
-            : [Domain];
+        (int From, int To)? selection = Selection is { } picked && picked != Domain ? picked : null;
+        (int From, int To) preferred = selection ?? Domain;
 
-        string suggested = SnapshotCsv.SuggestFileName(_snapshot, ranges[0].From, ranges[0].To);
-        var dialog = new Microsoft.Win32.SaveFileDialog
-        {
-            FileName = suggested,
-            DefaultExt = ".csv",
-            Filter = ranges.Length == 1
-                ? "CSV 파일 (*.csv)|*.csv"
-                : $"선택 구간만 — {Extent(ranges[0])} (*.csv)|*.csv"
-                  + $"|크롭 구간 전체 — {Extent(ranges[1])} (*.csv)|*.csv",
-        };
+        string suggested = SnapshotCsv.SuggestFileName(_snapshot, preferred.From, preferred.To);
+        var answer = SaveDialog.Show(this, suggested, "CSV 파일", ".csv",
+            selection is { } option ? ("내보낼 범위", $"선택 구간만 ({Duration(option)})", true) : null);
+        // 대화상자가 남긴 활성을 이 창으로 되돌린다. 여기서 흐트러지면 나중에 이 창을 닫을 때
+        // 활성이 엉뚱한 곳으로 간다.
+        Activate();
+        if (answer is not { } result) return;
 
-        if (dialog.ShowDialog(this) != true) return;
+        var (from, to) = result.Checked ? preferred : Domain;
+        string path = result.Path;
 
-        var (from, to) = ranges[Math.Clamp(dialog.FilterIndex - 1, 0, ranges.Length - 1)];
-        string path = dialog.FileName;
-
-        // 이름을 건드리지 않은 채 범위만 바꿨으면 이름도 따라간다 — 그러지 않으면 파일명 끝의
+        // 이름을 건드리지 않은 채 체크만 풀었으면 이름도 따라간다 — 그러지 않으면 파일명 끝의
         // 길이가 내용과 어긋난 채 남는다. 손댄 이름은 그대로 존중한다.
-        if (Path.GetFileName(path) == suggested && (from, to) != ranges[0])
+        if (Path.GetFileName(path) == suggested && (from, to) != preferred)
             path = Path.Combine(Path.GetDirectoryName(path) ?? "",
                                 SnapshotCsv.SuggestFileName(_snapshot, from, to));
 
@@ -502,13 +514,12 @@ public sealed class SnapshotWindow : Window
         }
     }
 
-    /// <summary>범위를 대화상자에 적을 한 줄로. 예 <c>14:32:07~14:33:41 · 94초</c>.</summary>
-    private string Extent((int From, int To) range)
-    {
-        var start = Local(range.From);
-        var end = Local(range.To - 1);
-        return $"{start:HH:mm:ss}~{end:HH:mm:ss} · {Describe(end - start)}";
-    }
+    /// <summary>
+    /// 구간의 길이. 예 <c>94초</c>. 시각까지 적으면 셸이 글씨를 잘라 버린다 —
+    /// 시작 시각은 어차피 기본 파일명이 들고 있다.
+    /// </summary>
+    private string Duration((int From, int To) range) =>
+        Describe(Local(range.To - 1) - Local(range.From));
 
     internal void BeginSelect(SnapshotChart chart, double x)
     {
