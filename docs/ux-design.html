@@ -183,7 +183,7 @@ canvas{display:block;width:100%;height:100%}
   <div class="panel"><h3 style="margin-top:0">③ 한 화면, 스크롤 없음</h3>
     <p>탭·페이지·스크롤이 없다. 장치가 늘어난 만큼 세로가 길어지는 대신 <b>접기</b>로 흡수한다.</p></div>
   <div class="panel"><h3 style="margin-top:0">④ 접어서 집중</h3>
-    <p>지금 보는 워크로드에 상관없는 지표는 28px 스트립으로 접는다. 접혀도 샘플링과 통계는 계속된다. 자주 쓰는 배치는 <b>프리셋</b>으로 전환한다.</p></div>
+    <p>지금 보는 워크로드에 상관없는 지표는 28px 스트립으로 접는다. 접혀도 샘플링과 통계는 계속된다.</p></div>
   <div class="panel"><h3 style="margin-top:0">⑤ 한 순간을 가로질러 본다</h3>
     <p>차트 위에 커서를 올리면 <b>모든 카드가 같은 시각을 가리킨다</b>. "GPU가 멈춘 그 순간 디스크는 뭘 했나"를 한 동작으로 확인한다.</p></div>
   <div class="panel"><h3 style="margin-top:0">⑥ 장치 구성은 살아 움직인다<span class="new">v0.4</span></h3>
@@ -196,7 +196,6 @@ canvas{display:block;width:100%;height:100%}
   <b style="font-size:14px">직접 해보세요</b>
   <ul style="margin:8px 0 0;font-size:14px;line-height:1.9">
     <li><b>Wi-Fi 끄기 · eGPU 연결</b> → 카드가 실시간으로 사라지고 나타납니다. 새 카드는 3초간 라벨을 보여줍니다.</li>
-    <li><b>프리셋</b> → 배치가 한 번에 바뀝니다. "최소"는 창 높이까지 줄어듭니다.</li>
     <li><b>카드 헤더 클릭</b> → 접기/펼치기. 공간이 모자라면 우선순위 최저 카드가 <b>자동으로 접힙니다</b>(점선).</li>
     <li><b>차트 위에 커서</b> → 전 카드에 같은 시각의 스크럽선과 오버레이. GPU에는 온도·전력·클럭, Wi-Fi에는 SSID·신호가 함께 나옵니다.</li>
     <li><b>카드 위에 커서</b> → 0.25초 뒤 그 장치의 이름이 헤더에 나타납니다. 더 오래 머물면 전체 사양이 툴팁으로 뜹니다.</li>
@@ -206,12 +205,6 @@ canvas{display:block;width:100%;height:100%}
   <span style="font-size:12px;color:var(--page-dim);font-family:var(--mono)">장치</span>
   <button class="btn sm" id="btnWifi">Wi-Fi 끄기</button>
   <button class="btn sm" id="btnEgpu">eGPU 연결 (AMD)</button>
-  <span style="font-size:12px;color:var(--page-dim);font-family:var(--mono);margin-left:12px">프리셋</span>
-  <button class="btn sm on" data-preset="default">기본</button>
-  <button class="btn sm" data-preset="ai">AI 워크로드</button>
-  <button class="btn sm" data-preset="render">렌더 / 게임</button>
-  <button class="btn sm" data-preset="io">데이터 전송</button>
-  <button class="btn sm" data-preset="min">최소</button>
 </div>
 <div class="toolbar" style="margin-top:10px">
   <button class="btn" id="btnLabels">라벨 보기 (L)</button>
@@ -279,7 +272,7 @@ canvas{display:block;width:100%;height:100%}
   <tr><th>종류</th><th>글리프</th><th>판정 (<code>MIB_IF_ROW2</code>)</th></tr>
   <tr><td>이더넷</td><td>RJ45 플러그</td><td><code>Type == IF_TYPE_ETHERNET_CSMACD(6)</code> 이고 가상/엔드포인트 플래그 없음</td></tr>
   <tr><td>Wi-Fi</td><td>전파 아크 + 점</td><td><code>Type == IF_TYPE_IEEE80211(71)</code></td></tr>
-  <tr><td>VPN / 터널</td><td>방패 + 열쇠구멍<br><b>(카드로 표시하지 않음)</b></td><td><code>IF_TYPE_TUNNEL(131)</code>, <code>IF_TYPE_PPP(23)</code>, 또는 <code>InterfaceAndOperStatusFlags.EndPointInterface</code> → <b>식별해서 제외</b>. 이유는 §09</td></tr>
+  <tr><td>VPN / 터널</td><td>방패 + 열쇠구멍<br><b>(카드로 표시하지 않음)</b></td><td><code>IF_TYPE_TUNNEL(131)</code>, <code>IF_TYPE_PPP(23)</code>, 또는 <code>InterfaceAndOperStatusFlags.EndPointInterface</code> → <b>식별해서 제외</b>. 이유는 §08</td></tr>
   <tr><td>셀룰러</td><td>신호 막대</td><td><code>IF_TYPE_WWANPP(243)</code> / <code>IF_TYPE_WWANPP2(244)</code></td></tr>
   <tr><td>기타 / 가상</td><td>양방향 화살표</td><td>위에 해당 없음 (Hyper-V, WSL, Bluetooth PAN 등)</td></tr>
 </table>
@@ -403,53 +396,16 @@ canvas{display:block;width:100%;height:100%}
 
 <div class="note"><b>자동 접힘은 사용자 결정을 덮어쓰지 않는다</b> — 자동으로 접힌 카드는 <b>점선 테두리</b>로 표시되고, 공간이 다시 생기면 자동 복원된다. 사용자가 직접 접은 카드는 자동 복원 대상이 아니다.</div>
 
-<h2 data-n="06">접힘 프리셋</h2>
-<table>
-  <tr><th>프리셋</th><th>펼침</th><th>의도</th><th>단축키</th></tr>
-  <tr><td><b>기본</b></td><td>CPU · 메모리 · 기본 네트워크 · 디스크0 · GPU0</td><td>일상 모니터링</td><td><code>Ctrl+1</code></td></tr>
-  <tr><td><b>AI 워크로드</b></td><td>GPU 전부 · 메모리 · 디스크0</td><td>학습/추론 — VRAM과 데이터 로딩 병목에 집중</td><td><code>Ctrl+2</code></td></tr>
-  <tr><td><b>렌더 / 게임</b></td><td>GPU0 · CPU</td><td>프레임 타임에 영향을 주는 둘만 크게</td><td><code>Ctrl+3</code></td></tr>
-  <tr><td><b>데이터 전송</b></td><td>네트워크 전부 · 디스크 전부</td><td>대용량 복사·다운로드·백업. VPN 경유 여부까지 한눈에</td><td><code>Ctrl+4</code></td></tr>
-  <tr><td><b>최소</b></td><td>없음 (전부 접힘)</td><td>스트립 모드. <b>창 높이도 함께 줄어든다</b></td><td><code>Ctrl+5</code></td></tr>
-  <tr><td>사용자 정의 ×5</td><td>현재 배치 저장</td><td>팝오버에서 "현재 배치 저장"</td><td><code>Ctrl+6</code>~<code>9</code></td></tr>
-</table>
-<div class="grid2">
-  <div class="panel">
-    <h3 style="margin-top:0">장치 인스턴스가 아니라 규칙으로 저장한다</h3>
-    <p>"GPU 1번 카드를 접는다"고 저장하면 그래픽카드를 교체하거나 eGPU를 뽑는 순간 의미를 잃는다. <b>장치 종류 규칙</b>으로 저장한다.</p>
-    <p style="font-family:var(--mono);font-size:12px;background:var(--page-surface2);padding:10px 12px;border-radius:8px;border:1px solid var(--page-border)">
-      { "gpu:*": "expanded",<br>
-      &nbsp;&nbsp;"disk:system": "expanded",<br>
-      &nbsp;&nbsp;"disk:*": "collapsed",<br>
-      &nbsp;&nbsp;"net:*": "collapsed",<br>
-      &nbsp;&nbsp;"cpu": "collapsed" }
-    </p>
-    <p style="font-size:13px;color:var(--page-dim)">장치가 붙거나 빠져도 프리셋이 그대로 유효하다 — <b>이것이 v0.4의 핫플러그와 맞물리는 지점</b>이다. 새로 붙은 Wi-Fi는 <code>net:*</code> 규칙을 따라 자동으로 올바른 상태가 된다.</p>
-  </div>
-  <div class="panel">
-    <h3 style="margin-top:0">전환 UI</h3>
-    <ul style="font-size:14px">
-      <li>타이틀바에 <b>프리셋 아이콘 1개</b> (핀 · 프리셋 · 테마 · 최소화 · 닫기)</li>
-      <li>클릭 → 작은 팝오버에 프리셋 목록 + "현재 배치 저장"</li>
-      <li><code>Ctrl+1</code>~<code>Ctrl+9</code>로 즉시 전환</li>
-      <li>프리셋 적용 후 카드를 직접 토글하면 <b>"수정됨"</b> 상태가 되고, 저장은 명시적으로만</li>
-      <li>전환은 접기와 같은 180ms 모션</li>
-    </ul>
-  </div>
-</div>
-
-<h2 data-n="07">접기 인터랙션</h2>
+<h2 data-n="06">접기 인터랙션</h2>
 <table>
   <tr><th>트리거</th><th>동작</th></tr>
   <tr><td>헤더 클릭</td><td>해당 카드 접기/펼치기 토글</td></tr>
-  <tr><td>아이콘 더블클릭</td><td>solo — 그 카드만 펼치고 나머지 전부 접기. 다시 더블클릭하면 복원</td></tr>
   <tr><td><code>1</code>~<code>9</code></td><td>n번째 카드 토글</td></tr>
-  <tr><td><code>Ctrl+1</code>~<code>Ctrl+9</code></td><td>프리셋 전환</td></tr>
   <tr><td>공간 부족</td><td>우선순위 최저 카드부터 자동 접힘(점선). 공간이 생기면 자동 복원</td></tr>
   <tr><td>센서 사용 불가</td><td>카드가 접힌 상태로 고정되고 스파크라인 자리에 얇은 0선만</td></tr>
 </table>
 
-<h2 data-n="08">동기화 오버레이</h2>
+<h2 data-n="07">동기화 오버레이</h2>
 <p class="lead">모든 카드는 <b>동일한 시간 축</b>을 공유한다. 한 지점을 가리키는 것은 곧 <b>시스템 전체의 한 순간을 잘라 보는 것</b>이다.</p>
 <table>
   <tr><th>동작</th><th>결과</th></tr>
@@ -472,7 +428,7 @@ canvas{display:block;width:100%;height:100%}
 </table>
 <div class="note"><b>텍스트 예산의 예외 구역</b> — 상시 화면은 카드당 숫자 5개로 제한하지만, 오버레이는 사용자가 명시적으로 요청했을 때만 나타나므로 정보 밀도를 높게 잡는다. 온도·전력·SSID를 상시 표시하지 않고 여기로 보낸 이유다.<br><br><b>채택하지 않음</b> — 두 시점을 동시에 고정해 비교하는 A/B 마커는 도입하지 않는다. 단일 화면 원칙과 충돌하고, 구간 비교는 리셋 마커가 이미 담당한다.</div>
 
-<h2 data-n="09">네트워크 인터페이스 분리 <span class="new">v0.4</span></h2>
+<h2 data-n="08">네트워크 인터페이스 분리 <span class="new">v0.4</span></h2>
 <p class="lead">합산 1카드에서 <b>인터페이스별 카드</b>로 바꾼다. 유선과 무선을 동시에 쓰거나, VPN을 경유하거나, 테더링으로 전환하는 상황에서 합산값은 아무것도 설명하지 못한다.</p>
 
 <div class="note"><b>VPN·터널 인터페이스는 카드로 만들지 않는다</b><br>
@@ -497,7 +453,7 @@ canvas{display:block;width:100%;height:100%}
   <li>링크 속도를 아는 인터페이스는 축 상한을 <b>링크 속도로 캡</b>해서 "회선을 얼마나 쓰고 있는가"가 위치로 읽히게 한다</li>
 </ul>
 
-<h2 data-n="10">장치 변경 실시간 반영 <span class="new">v0.4</span></h2>
+<h2 data-n="09">장치 변경 실시간 반영 <span class="new">v0.4</span></h2>
 <p class="lead">Wi-Fi를 켜고, eGPU를 꽂고, USB 디스크를 뽑는다. 재시작 없이 카드가 즉시 나타나고 사라져야 한다. <b>목업의 "Wi-Fi 끄기" / "eGPU 연결" 버튼으로 직접 확인할 수 있다.</b></p>
 
 <h3>감지 경로</h3>
@@ -528,7 +484,7 @@ canvas{display:block;width:100%;height:100%}
     <h3 style="margin-top:0">추가 · 제거 · 상태 변경</h3>
     <table style="margin-top:6px">
       <tr><th>변화</th><th>동작</th></tr>
-      <tr><td><b>추가</b></td><td>카드 등장(320ms 페이드 인), <b>프리셋 규칙에 따라</b> 접힘/펼침 결정, 라벨 3초 표시, 레지스트리 슬롯 추가</td></tr>
+      <tr><td><b>추가</b></td><td>카드 등장(320ms 페이드 인), <b>저장된 접힘 상태</b>에 따라 접힘/펼침 결정, 라벨 3초 표시, 레지스트리 슬롯 추가</td></tr>
       <tr><td><b>제거</b></td><td>카드 제거(180ms), 시리즈·통계는 <b>60초 보관</b> 후 폐기</td></tr>
       <tr><td><b>재연결</b></td><td>60초 안에 같은 키(LUID·시리얼·인터페이스 GUID)로 돌아오면 <b>히스토리·통계가 이어진다</b></td></tr>
       <tr><td><b>Up ↔ Down</b></td><td>제거가 아니라 <b>Unavailable 상태</b>. 카드 유지, 통계 연속, 차트에 공백 구간</td></tr>
@@ -545,18 +501,18 @@ canvas{display:block;width:100%;height:100%}
   <li><b>전역 바의 상태 점</b> 개수가 바뀌는 것으로 구성 변화가 보인다</li>
 </ul>
 
-<h2 data-n="11">다중 GPU</h2>
+<h2 data-n="10">다중 GPU</h2>
 <table>
   <tr><th>항목</th><th>규칙</th></tr>
   <tr><td>열거</td><td>DXGI <code>EnumAdapterByGpuPreference(HIGH_PERFORMANCE)</code>. 소프트웨어 어댑터 제외</td></tr>
   <tr><td>식별</td><td>아이콘 = <b>제조사 글리프 + 브랜드 색</b>, 배지 = <b>인덱스 + 외장/내장</b>, 라벨 페이드 = 모델명</td></tr>
   <tr><td>순서</td><td>외장 → 내장, 그 안에서는 전용 VRAM 큰 순</td></tr>
   <tr><td>기본 표시</td><td>0번만 펼침. 유휴 60초 이상인 어댑터는 접힌 채로</td></tr>
-  <tr><td>3개 이상</td><td>제한 없음. 가중치·자동 접힘·프리셋 규칙이 그대로 적용</td></tr>
-  <tr><td>핫플러그</td><td>§10의 규칙을 따른다. LUID 기준으로 통계 유지</td></tr>
+  <tr><td>3개 이상</td><td>제한 없음. 가중치와 자동 접힘이 그대로 적용</td></tr>
+  <tr><td>핫플러그</td><td>§09의 규칙을 따른다. LUID 기준으로 통계 유지</td></tr>
 </table>
 
-<h2 data-n="12">GPU 조합 차트</h2>
+<h2 data-n="11">GPU 조합 차트</h2>
 <div class="svgbox">
 <svg viewBox="0 0 800 330" xmlns="http://www.w3.org/2000/svg" font-family="ui-monospace,Consolas,monospace" font-size="11.5">
   <defs>
@@ -594,12 +550,12 @@ canvas{display:block;width:100%;height:100%}
 </div>
 <div class="note"><b>왜 합계 축이 아니라 전용 용량을 기준선으로 두는가</b> — 전용+공유 합계를 축 최대값으로 쓰면 VRAM이 꽉 찼는지가 그래프 높이로 드러나지 않는다. 용량선을 고정 기준으로 두면 "선에 닿았다 / 넘었다"라는 <b>이진 판단</b>이 형태만으로 가능해진다.</div>
 
-<h2 data-n="13">디스크 카드</h2>
+<h2 data-n="12">디스크 카드</h2>
 <div class="grid2">
   <div class="panel">
     <h3 style="margin-top:0">물리 디스크별 카드 — 합산하지 않는다</h3>
     <p>디스크를 합산하면 "NVMe가 놀고 있는데 백업용 HDD가 포화됐다" 같은 중요한 상황이 평균에 묻힌다. 장치 특성이 너무 달라(NVMe 7GB/s vs HDD 200MB/s) 같은 축에 올리는 것 자체가 부적절하다.</p>
-    <p style="font-size:13px;color:var(--page-dim)">개수 문제는 <b>기본 접힘 + 자동 접힘 + 프리셋</b>이 처리한다. 네트워크도 같은 이유로 분리했다(§09).</p>
+    <p style="font-size:13px;color:var(--page-dim)">개수 문제는 <b>기본 접힘과 자동 접힘</b>이 처리한다. 네트워크도 같은 이유로 분리했다(§08).</p>
   </div>
   <div class="panel">
     <h3 style="margin-top:0">포화는 처리량이 아니라 활성 시간으로</h3>
@@ -611,7 +567,7 @@ canvas{display:block;width:100%;height:100%}
   </div>
 </div>
 
-<h2 data-n="14">컬러 토큰</h2>
+<h2 data-n="13">컬러 토큰</h2>
 <h3>표면 · 텍스트</h3>
 <div class="tokens">
   <div class="tok"><div class="sw" style="background:#0E1116"></div><div class="meta"><b>Bg</b><span>#0E1116 / #F4F6F9</span></div></div>
@@ -652,7 +608,7 @@ canvas{display:block;width:100%;height:100%}
   <tr><td>스크럽선</td><td>Fg 55%, 1px 파선 + 계열 색 3px 점</td><td>값이 읽히는 지점을 계열 색으로</td></tr>
 </table>
 
-<h2 data-n="15">상태 정의</h2>
+<h2 data-n="14">상태 정의</h2>
 <table>
   <tr><th>상태</th><th>시각 처리</th><th>발생 조건</th></tr>
   <tr><td>Normal</td><td>기본 색, 저채도 배경</td><td>—</td></tr>
@@ -661,7 +617,7 @@ canvas{display:block;width:100%;height:100%}
   <tr><td>Labels</td><td>헤더에 라벨 3초 노출 후 300ms 페이드</td><td>최초 실행 / 새 장치 / <code>L</code> 유지</td></tr>
   <tr><td><b>New device</b><span class="new">v0.4</span></td><td>320ms 페이드 인 + 라벨 3초</td><td>장치 추가 감지</td></tr>
   <tr><td><b>Alert</b></td><td>테두리 Warn 55% + 외곽 글로우 (접힌 상태에서도)</td><td>GPU 스필오버(외장만) / 디스크 활성 95% 3초 / 메모리 95% / CPU 30초 평균 95%</td></tr>
-  <tr><td>Collapsed</td><td>28px 스트립 — 아이콘 + 스파크라인 + 값. 스파크라인은 <b>자체 창 최대값 기준 상대 스케일</b></td><td>사용자 접기 또는 프리셋</td></tr>
+  <tr><td>Collapsed</td><td>28px 스트립 — 아이콘 + 스파크라인 + 값. 스파크라인은 <b>자체 창 최대값 기준 상대 스케일</b></td><td>사용자 접기 또는 자동 접힘</td></tr>
   <tr><td>Auto-collapsed</td><td>위와 같되 <b>점선 테두리</b></td><td>공간 부족. 공간이 생기면 자동 복원</td></tr>
   <tr><td>Unavailable</td><td>접힌 채 고정, opacity 40%, 스파크라인 자리에 0선</td><td>센서 실패, 드라이버 없음, <b>인터페이스 Down</b></td></tr>
   <tr><td>Stale</td><td>차트 우측 끝이 회색으로 페이드</td><td>마지막 샘플이 2주기 이상 경과</td></tr>
@@ -669,7 +625,7 @@ canvas{display:block;width:100%;height:100%}
   <tr><td>Occluded</td><td>렌더 중단 (샘플링은 계속)</td><td>최소화 또는 완전히 가려짐</td></tr>
 </table>
 
-<h2 data-n="16">타이포그래피 · 아이콘 사양</h2>
+<h2 data-n="15">타이포그래피 · 아이콘 사양</h2>
 <table>
   <tr><th>용도</th><th>폰트</th><th>크기</th><th>비고</th></tr>
   <tr><td>현재값 (펼침)</td><td>Cascadia Mono</td><td>26px / 600</td><td><code>tabular-nums</code> 필수</td></tr>
@@ -683,12 +639,11 @@ canvas{display:block;width:100%;height:100%}
 </table>
 <p>아이콘은 <b>16px 그리드, 1.7px 스트로크, 라운드 캡의 단색 라인 아이콘</b>으로 통일한다. 제조사 글리프도 같은 규칙을 따르며 획 수를 4개 이하로 유지한다.</p>
 
-<h2 data-n="17">모션</h2>
+<h2 data-n="16">모션</h2>
 <table>
   <tr><th>대상</th><th>지속</th><th>이징</th><th>비고</th></tr>
   <tr><td>카드 접기/펼치기</td><td>180ms</td><td>cubic-bezier(.4,0,.2,1)</td><td>높이만</td></tr>
-  <tr><td>프리셋 전환</td><td>180ms</td><td>동일</td><td>여러 카드가 동시에 움직여도 같은 타이밍</td></tr>
-  <tr><td>"최소" 프리셋 창 높이</td><td>220ms</td><td>동일</td><td>카드 전환과 겹쳐 하나의 동작으로</td></tr>
+  <tr><td>창 높이 전환</td><td>220ms</td><td>동일</td><td>카드 전환과 겹쳐 하나의 동작으로</td></tr>
   <tr><td><b>장치 추가</b></td><td>320ms</td><td>ease-out</td><td>위에서 6px 슬라이드 + 페이드 인</td></tr>
   <tr><td><b>장치 제거</b></td><td>180ms</td><td>ease-in</td><td>페이드 아웃 후 높이 재분배</td></tr>
   <tr><td>라벨 페이드</td><td>3000ms 유지 → 300ms out</td><td>ease-out</td><td></td></tr>
@@ -699,18 +654,18 @@ canvas{display:block;width:100%;height:100%}
 </table>
 <div class="note">접근성 "동작 줄이기"가 켜져 있으면 위 모션을 <b>전부</b> 제거한다. 단 <b>라벨 페이드의 3초 표시 시간은 유지</b>한다 — 정보 전달이 목적이지 장식이 아니다.</div>
 
-<h2 data-n="18">접근성</h2>
+<h2 data-n="17">접근성</h2>
 <ul>
   <li>대비: 본문 4.5:1, 그래픽 요소 3:1 이상 (다크·라이트 양쪽 검증)</li>
   <li>색상 단독 정보 전달 금지 — GPU 전용/공유는 <b>솔리드 vs 해치</b>, 제조사는 <b>색 + 글리프 모양</b>, 어댑터는 <b>인덱스 배지</b>, 디스크·네트워크는 <b>종류 글리프</b>, 지표는 <b>순서 고정</b></li>
   <li>적록색약 사용자에게 NVIDIA 그린과 AMD 레드는 구분이 어려울 수 있다 — 그래서 <b>글리프 모양이 1차 채널, 색은 보조</b>다. 색을 제거해도 정보 손실이 없어야 한다</li>
   <li>아이콘만으로 식별이 안 되는 사용자를 위한 탈출구 — <code>L</code> 유지, hover 툴팁, 설정의 "라벨 항상 표시"</li>
-  <li>키보드: <code>Tab</code> = 리셋 → 카드 순서 → 타이틀바. <code>Space</code>/<code>Enter</code> 접기, <code>1</code>~<code>9</code> 카드 토글, <code>Ctrl+1</code>~<code>9</code> 프리셋, <code>←</code><code>→</code> 스크럽, <code>Esc</code> 해제</li>
+  <li>키보드: <code>Tab</code> = 리셋 → 카드 순서 → 타이틀바. <code>Space</code>/<code>Enter</code> 접기, <code>1</code>~<code>9</code> 카드 토글, <code>←</code><code>→</code> 스크럽, <code>Esc</code> 해제</li>
   <li>스크린 리더: 축약 없는 전체 문장. <b>장치 추가·제거는 <code>LiveRegion</code>으로 알린다</b> — 시각적으로는 카드 등장이 알림이지만 스크린 리더 사용자에게는 보이지 않으므로</li>
   <li>접힌 카드도 스크린 리더에서는 전체 값이 읽힌다</li>
 </ul>
 
-<h2 data-n="19">스냅샷 창 <span class="new">v1.5</span></h2>
+<h2 data-n="18">스냅샷 창 <span class="new">v1.5</span></h2>
 <p class="lead">메인 창은 곁눈질용이라 화면이 계속 흐른다. 방금 지나간 스파이크를 붙들어
 <b>구간</b>으로 재려면 흐름 자체를 멈춰야 한다. 메인 창 제목 표시줄의 <b>스냅샷 버튼</b>을 누르면
 지금 링 버퍼에 있는 것을 통째로 복제해 새 창에 띄운다 — 그 창에는 새 데이터가 들어오지 않는다.
@@ -878,7 +833,7 @@ canvas{display:block;width:100%;height:100%}
   <tr><td><b>확대</b> — <code>Ctrl</code>+휠</td><td>보이는 범위(가로만)</td><td>내보낼 범위. <b>보이는 것이 아니라 정한 것을 낸다</b></td></tr>
 </table>
 
-<div class="note warn">세로 축은 확대하지 않는다. 퍼센트는 0~100 고정, GPU 메모리는 용량 기준(§12)이라
+<div class="note warn">세로 축은 확대하지 않는다. 퍼센트는 0~100 고정, GPU 메모리는 용량 기준(§11)이라
 세로로 늘이는 순간 그 규칙이 무너진다. 같은 자리의 같은 높이가 늘 같은 값이어야 한다.</div>
 
 <h3>제스처</h3>
@@ -928,11 +883,10 @@ canvas{display:block;width:100%;height:100%}
 여러 개를 열 수 있어야 한다. 그래서 타이틀이 <b>데이터 시작 시각</b>이다 — 창이 여러 개일 때
 무엇이 언제 남긴 것인지는 타이틀에서만 갈린다.</div>
 
-<h2 data-n="20">열린 UX 질문</h2>
+<h2 data-n="19">열린 UX 질문</h2>
 <ol>
   <li>제조사 글리프의 <b>식별 정확도 검증</b> — 16px에서 NVIDIA/AMD/Intel이 실제로 구분되는지. 실패하면 배지에 이니셜(N/A/I)을 넣는 안으로 후퇴</li>
   <li>VPN 이중 계상을 <b>차트에서도</b> 표현할지 — 예: VPN 카드의 영역을 하위 인터페이스 카드에 옅은 오버레이로 겹쳐 그리기. 정보는 늘지만 복잡도가 크게 는다</li>
-  <li>프리셋을 <b>워크로드 자동 감지</b>로 전환할지 — Compute 사용률이 30초 이상 높으면 "AI 워크로드" 자동 적용. 편하지만 예측 불가능성이 생긴다</li>
   <li>장치가 12개를 넘는 워크스테이션 — 종류별 요약 카드 + 개별 펼치기 모드가 필요할지</li>
 </ol>
 
@@ -980,7 +934,7 @@ canvas{display:block;width:100%;height:100%}
   preview('iconNet',[
     {k:'eth',n:'이더넷',s:'IF_TYPE_ETHERNET_CSMACD'},
     {k:'wifi',n:'Wi-Fi',s:'IF_TYPE_IEEE80211'},
-    {k:'vpn',n:'VPN / 터널',s:'식별 후 제외 (§09)'},
+    {k:'vpn',n:'VPN / 터널',s:'식별 후 제외 (§08)'},
     {k:'cell',n:'셀룰러',s:'IF_TYPE_WWANPP'},
     {k:'net',n:'기타 / 가상',s:'Hyper-V · WSL · BT PAN'}],'#34D399');
 
@@ -1123,15 +1077,10 @@ canvas{display:block;width:100%;height:100%}
   let present=['cpu','mem','net0','net1','disk0','disk1','gpu0','gpu1'];
   const cardsOf=()=>ORDER.filter(k=>present.includes(k)).map(k=>DEF[k]);
 
-  // 프리셋은 장치 인스턴스가 아니라 규칙으로 저장한다
-  const PRESETS={
-    default:d=>({cpu:0,mem:0,net:d.ni===0?0:1,disk:d.di===0?0:1,gpu:d.gi===0?0:1}[d.kind]),
-    ai:     d=>({cpu:1,mem:0,net:1,disk:d.di===0?0:1,gpu:0}[d.kind]),
-    render: d=>({cpu:0,mem:1,net:1,disk:1,gpu:d.gi===0?0:1}[d.kind]),
-    io:     d=>({cpu:1,mem:1,net:0,disk:0,gpu:1}[d.kind]),
-    min:    ()=>1
-  };
-  let curPreset='default';
+  // 기본 접힘 규칙 — 같은 종류가 여럿이면 첫 번째만 펼친다.
+  // (프리셋은 걷어냈다. 곁눈질로 읽는 위젯에서 배치를 외우게 만들 값이 아니었다)
+  const defaultCollapsed=d=>
+    ({cpu:0,mem:0,net:d.ni===0?0:1,disk:d.di===0?0:1,gpu:d.gi===0?0:1}[d.kind]);
 
   function appHTML(){
     const ic=p=>`<span class="ticon"><svg viewBox="0 0 16 16">${p}</svg></span>`;
@@ -1224,7 +1173,7 @@ canvas{display:block;width:100%;height:100%}
     a.cardsEl=el.querySelector('[data-cards]');
     a.dotsEl=el.querySelector('[data-dots]');
     a.resetBtn.addEventListener('click',()=>doReset());
-    ALL.forEach(c=>a.state[c.key]={collapsed:!!PRESETS[curPreset](c),auto:false});
+    ALL.forEach(c=>a.state[c.key]={collapsed:!!defaultCollapsed(c),auto:false});
     syncCards(a,[]);
     new ResizeObserver(()=>layout(a)).observe(a.cardsEl);
     return a;
@@ -1242,7 +1191,7 @@ canvas{display:block;width:100%;height:100%}
         cv:root.querySelector('[data-canvas]'),spark:root.querySelector('[data-spark]'),ovl:root.querySelector('[data-ovl]'),
         val:root.querySelector('[data-val]'),unit:root.querySelector('[data-unit]'),
         foot:root.querySelector('[data-foot]'),scale:root.querySelector('[data-scale]')};
-      if(!a.state[c.key]) a.state[c.key]={collapsed:!!PRESETS[curPreset](c),auto:false};
+      if(!a.state[c.key]) a.state[c.key]={collapsed:!!defaultCollapsed(c),auto:false};
       if(newKeys.includes(c.key)){
         root.classList.add('enter','newdev');
         setTimeout(()=>root.classList.remove('newdev'),3000);
@@ -1291,14 +1240,6 @@ canvas{display:block;width:100%;height:100%}
     });
   }
 
-  function applyPreset(a,name){
-    const f=PRESETS[name];if(!f)return;
-    cardsOf().forEach(c=>{a.state[c.key]={collapsed:!!f(c),auto:false};});
-    a.soloBackup=null;a.minMode=(name==='min');
-    const n=cardsOf().length;
-    a.el.style.height=a.minMode?(HDR+PAD+n*COLLAPSED_H+(n-1)*GAP)+'px':'';
-    requestAnimationFrame(()=>layout(a));
-  }
 
   // ── 오버레이 ────────────────────────────────
   const NETMETA={eth:{n:'Ethernet',d:'Intel I225-V · 2.5 Gbps · Full duplex'},
@@ -1509,11 +1450,7 @@ canvas{display:block;width:100%;height:100%}
   document.getElementById('btnSpill').addEventListener('click',()=>{S.spill=45;});
   const pb=document.getElementById('btnPause');
   pb.addEventListener('click',()=>{S.paused=!S.paused;pb.textContent=S.paused?'재생':'일시정지';});
-  document.querySelectorAll('[data-preset]').forEach(b=>b.addEventListener('click',()=>{
-    document.querySelectorAll('[data-preset]').forEach(x=>x.classList.remove('on'));
-    b.classList.add('on');curPreset=b.dataset.preset;
-    apps.forEach(a=>applyPreset(a,curPreset));
-  }));
+
   window.addEventListener('keydown',e=>{
     if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='r'){e.preventDefault();doReset();return;}
     if(e.key==='l'||e.key==='L'){showLabels(0);return;}

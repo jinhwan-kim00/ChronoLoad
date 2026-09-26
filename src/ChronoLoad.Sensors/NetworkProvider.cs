@@ -21,9 +21,6 @@ namespace ChronoLoad.Sensors;
 /// </remarks>
 public sealed class NetworkProvider : ISensorProvider
 {
-    /// <summary>이 시간 동안 누적 옥텟이 한 바이트도 변하지 않으면 숨긴다. 가상 어댑터 대부분이 여기서 걸러진다.</summary>
-    public static readonly TimeSpan IdleHideAfter = TimeSpan.FromMinutes(5);
-
     private readonly List<IfTable.Counters> _counters = [];
     private readonly Dictionary<ulong, Interface> _interfaces = [];
     private MetricRegistry? _registry;
@@ -75,7 +72,6 @@ public sealed class NetworkProvider : ISensorProvider
                 Handle = handle,
                 RxSlot = handle.SlotOf(MetricKind.NetRx),
                 TxSlot = handle.SlotOf(MetricKind.NetTx),
-                LastChangeUtcTicks = DateTime.UtcNow.Ticks,
             };
         }
 
@@ -197,9 +193,6 @@ public sealed class NetworkProvider : ISensorProvider
             writer.Write(state.RxSlot, rx);
             writer.Write(state.TxSlot, tx);
 
-            if (counter.InOctets != state.LastIn || counter.OutOctets != state.LastOut)
-                state.LastChangeUtcTicks = now;
-
             state.Snapshot(counter, now);
         }
     }
@@ -210,12 +203,6 @@ public sealed class NetworkProvider : ISensorProvider
     /// </summary>
     private static double Delta(ulong previous, ulong current) =>
         current >= previous ? current - previous : 0;
-
-    /// <summary>5분간 한 바이트도 오가지 않은 인터페이스. 카드에서 감춘다.</summary>
-    public IEnumerable<string> IdleInterfaceKeys(long nowUtcTicks) =>
-        _interfaces.Values
-            .Where(i => nowUtcTicks - i.LastChangeUtcTicks > IdleHideAfter.Ticks)
-            .Select(i => i.Handle.Key);
 
     public void Dispose()
     {
@@ -232,7 +219,6 @@ public sealed class NetworkProvider : ISensorProvider
         public ulong LastIn { get; private set; }
         public ulong LastOut { get; private set; }
         public long LastSampleUtcTicks { get; private set; }
-        public long LastChangeUtcTicks { get; set; }
         public bool HasBaseline { get; set; }
 
         public void Snapshot(in IfTable.Counters counters, long nowUtcTicks)
