@@ -189,4 +189,71 @@ public class AppSettingsTests
         Assert.Equal(new WindowPlacement(2940, 60, 595, 1267), AppSettings.Load().Window);
     }
 
+    // ── 불투명도와 테마 (§9.4 · §11) ──────────────────────────
+
+    [Fact]
+    public void Opacity_and_theme_survive_a_round_trip()
+    {
+        using var temp = new TempLocalAppData();
+        new AppSettings { Opacity = 0.75, Theme = "dark" }.Save();
+
+        var loaded = AppSettings.Load();
+        Assert.Equal(0.75, loaded.Opacity, 3);
+        Assert.Equal("dark", loaded.Theme);
+    }
+
+    [Fact]
+    public void Defaults_are_fully_opaque_and_follow_the_system_theme()
+    {
+        using var temp = new TempLocalAppData();
+        var loaded = AppSettings.Load();
+
+        Assert.Equal(1, loaded.Opacity);
+        Assert.Equal("system", loaded.Theme);
+    }
+
+    /// <summary>
+    /// 하한이 있는 이유는 그 아래로 가면 읽을 수 없을 뿐 아니라 <b>창을 다시 찾기도</b>
+    /// 어려워지기 때문이다. 손으로 고친 파일이든 휠이든 같은 문에서 걸러야 한다.
+    /// </summary>
+    [Theory]
+    [InlineData(0.2, AppSettings.MinOpacity)]
+    [InlineData(-5, AppSettings.MinOpacity)]
+    [InlineData(1.4, 1)]
+    [InlineData(0.8, 0.8)]
+    public void Opacity_is_clamped_to_the_readable_range(double given, double expected)
+    {
+        Assert.Equal(expected, new AppSettings { Opacity = given }.Opacity, 6);
+    }
+
+    [Fact]
+    public void A_non_finite_opacity_falls_back_to_fully_opaque()
+    {
+        Assert.Equal(1, new AppSettings { Opacity = double.NaN }.Opacity);
+        Assert.Equal(1, new AppSettings { Opacity = double.PositiveInfinity }.Opacity);
+    }
+
+    /// <summary>오타 하나로 앱이 못 뜨면 안 된다. 모르는 값은 기본값으로 떨어뜨린다.</summary>
+    [Fact]
+    public void An_unknown_theme_name_reads_back_as_system()
+    {
+        using var temp = new TempLocalAppData();
+        Directory.CreateDirectory(AppSettings.Directory);
+        File.WriteAllText(AppSettings.FilePath,
+            """{ "schemaVersion": 2, "theme": "미드나잇", "opacity": 0.9 }""");
+
+        var loaded = AppSettings.Load();
+        Assert.Equal("system", loaded.Theme);
+        Assert.Equal(0.9, loaded.Opacity, 3);   // 나머지 값은 멀쩡히 읽는다
+    }
+
+    [Fact]
+    public void Theme_names_are_read_case_insensitively()
+    {
+        using var temp = new TempLocalAppData();
+        Directory.CreateDirectory(AppSettings.Directory);
+        File.WriteAllText(AppSettings.FilePath, """{ "schemaVersion": 2, "theme": "Dark" }""");
+
+        Assert.Equal("dark", AppSettings.Load().Theme);
+    }
 }

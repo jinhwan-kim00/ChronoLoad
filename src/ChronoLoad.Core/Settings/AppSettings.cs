@@ -49,8 +49,27 @@ public sealed class AppSettings
     /// <summary>읽어들인 원본. 모르는 키를 보존하기 위해 들고 있는다.</summary>
     private JsonObject _raw = [];
 
+    /// <summary>불투명도의 하한. 이보다 흐려지면 읽을 수 없고, 창을 다시 찾기도 어려워진다.</summary>
+    public const double MinOpacity = 0.6;
+
     public WindowPlacement? Window { get; set; }
     public bool Topmost { get; set; }
+
+    /// <summary>창 불투명도 0.6~1.0 (§9.4).</summary>
+    public double Opacity
+    {
+        get;
+        set => field = double.IsFinite(value) ? Math.Clamp(value, MinOpacity, 1) : 1;
+    } = 1;
+
+    /// <summary>
+    /// 테마 — <c>system</c> · <c>dark</c> · <c>light</c>. 모르는 값이면 <c>system</c> 으로 읽는다.
+    /// </summary>
+    /// <remarks>
+    /// 문자열로 두는 것은 <c>AppTheme</c> 이 표현 계층의 열거형이기 때문이다. 설정 모델이
+    /// 그것을 알면 Core 가 UI 를 향해 거꾸로 의존한다.
+    /// </remarks>
+    public string Theme { get; set; } = "system";
 
     /// <summary>장치 키 → 접힘 여부. 지금 없는 장치의 항목도 남겨둔다(다시 꽂으면 되살아난다).</summary>
     public Dictionary<string, bool> Collapsed { get; } = new(StringComparer.OrdinalIgnoreCase);
@@ -97,6 +116,11 @@ public sealed class AppSettings
             settings.Window = ReadPlacement(root);
 
             settings.Topmost = root["topmost"]?.GetValue<bool>() ?? false;
+            settings.Opacity = root["opacity"]?.GetValue<double>() ?? 1;
+
+            // 모르는 값은 기본값으로 떨어뜨린다. 오타 하나로 앱이 못 뜨면 안 된다.
+            string? theme = root["theme"]?.GetValue<string>()?.ToLowerInvariant();
+            settings.Theme = theme is "dark" or "light" or "system" ? theme : "system";
 
             if (root["collapsed"] is JsonObject collapsed)
                 foreach (var (key, value) in collapsed)
@@ -145,6 +169,8 @@ public sealed class AppSettings
 
             _raw["schemaVersion"] = CurrentSchemaVersion;
             _raw["topmost"] = Topmost;
+            _raw["opacity"] = Math.Round(Opacity, 3);
+            _raw["theme"] = Theme;
 
             if (Window is { IsValid: true } placement)
                 _raw["window"] = new JsonObject

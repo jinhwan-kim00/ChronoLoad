@@ -36,7 +36,7 @@ public partial class App : Application
             RunRenderTest(e.Args[renderTestIndex + 1], e.Args.Contains("--light"),
                 e.Args.Contains("--collapsed"), scrub, e.Args.Contains("--hotplug"),
                 e.Args.Contains("--about"), e.Args.Contains("--scrub-drift"),
-                e.Args.Contains("--gap"), width);
+                e.Args.Contains("--gap"), width, e.Args.Contains("--settings"));
             return;
         }
 
@@ -112,7 +112,7 @@ public partial class App : Application
     /// </summary>
     private void RunRenderTest(string outputPath, bool light, bool collapsed, int? scrubIndex = null,
                                bool hotPlug = false, bool about = false, bool scrubDrift = false,
-                               bool gap = false, TimeSpan? width = null)
+                               bool gap = false, TimeSpan? width = null, bool settings = false)
     {
         // 렌더 테스트는 합성 장치를 쓴다. 실제 설정 폴더를 그대로 쓰면 사용자의 창 위치를
         // 읽어 와 그림이 달라지고, 끝낼 때 gpu:demo 같은 가짜 장치 키를 사용자 파일에 남긴다.
@@ -145,6 +145,7 @@ public partial class App : Application
         if (hotPlug) RunHotPlugScript(window, registry, engine!, outputPath);
         else if (scrubDrift) RunScrubDriftScript(window, registry, engine!, outputPath);
         else if (about) CaptureAfter(500, window, outputPath, () => CaptureAbout(window, outputPath));
+        else if (settings) CaptureAfter(500, window, outputPath, () => CaptureSettings(window, outputPath));
         else CaptureAfter(600, window, outputPath, Shutdown);
     }
 
@@ -242,6 +243,28 @@ public partial class App : Application
     }
 
     /// <summary>정보 창을 띄워 따로 찍는다. 대화 상자는 별도 창이라 본 창 캡처에 잡히지 않는다.</summary>
+    /// <summary>설정 팝오버(§11)를 띄워 따로 담는다. 본 창 캡처에는 나오지 않는 별도 창이다.</summary>
+    private void CaptureSettings(Window owner, string outputPath)
+    {
+        var popover = new Controls.SettingsWindow(owner, Core.Settings.AppSettings.Load())
+        {
+            WindowStartupLocation = WindowStartupLocation.Manual,
+            Left = -10_000,
+            Top = -10_000,
+            ShowActivated = false,
+        };
+        popover.Show();
+
+        CaptureAfter(500, popover, Path.Combine(
+            Path.GetDirectoryName(Path.GetFullPath(outputPath))!,
+            Path.GetFileNameWithoutExtension(outputPath) + "-settings.png"), () =>
+        {
+            popover.Close();
+            owner.Close();
+            Shutdown();
+        });
+    }
+
     private void CaptureAbout(Window owner, string outputPath)
     {
         var about = new Controls.AboutWindow(owner)

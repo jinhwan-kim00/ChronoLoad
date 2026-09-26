@@ -24,6 +24,8 @@ public partial class MainWindow : Window
     // 시간 폭(§9.4). 저장하지 않는다 — 곁눈질 위젯은 늘 같은 자리에 같은 것이 있어야 하는데,
     // 어제 600초로 두고 껐다는 사실을 기억하지 못한 채 열면 화면이 낯설다.
     private TimeSpan _timeWidth = TimeWidthLadder.Standard;
+
+    private SettingsWindow? _openSettings;
     private readonly SampleEngine? _engine;
     private readonly List<CardView> _cards = [];
     private readonly ThemeService _theme = ThemeService.Instance;
@@ -66,6 +68,14 @@ public partial class MainWindow : Window
         _initialScrub = initialScrub;
         _startCollapsed = startCollapsed;
         Topmost = _settings.Topmost;
+        Opacity = _settings.Opacity;
+        // 테마는 그동안 저장되지 않아 달 버튼으로 바꿔도 재시작하면 잃었다.
+        _theme.Mode = _settings.Theme switch
+        {
+            "dark" => AppTheme.Dark,
+            "light" => AppTheme.Light,
+            _ => AppTheme.System,
+        };
 
         // 설정 저장은 모아서 한 번에 한다. 창을 끌 때마다 파일을 쓸 이유가 없다.
         _saveSettle.Tick += (_, _) => { _saveSettle.Stop(); SaveSettings(); };
@@ -85,7 +95,8 @@ public partial class MainWindow : Window
         ResetButton.Click += (_, _) => ResetStats();
         BuildBrandMenu();
         PinButton.Click += (_, _) => { Topmost = !Topmost; ApplyTheme(); MarkSettingsDirty(); };
-        ThemeButton.Click += (_, _) => _theme.Toggle();
+        ThemeButton.Click += (_, _) => { _theme.Toggle(); RememberTheme(); };
+        SettingsButton.Click += (_, _) => OpenSettings();
         MinimizeButton.Click += (_, _) => WindowState = WindowState.Minimized;
         CloseButton.Click += (_, _) => Close();
 
@@ -509,6 +520,49 @@ public partial class MainWindow : Window
         RefreshCards();
     }
 
+    /// <summary>
+    /// 창 불투명도를 바꾼다. 하한이 60% 인 것은 그 아래로 가면 읽을 수 없고,
+    /// 창을 <b>다시 찾기도</b> 어려워지기 때문이다(§9.4).
+    /// </summary>
+    private void SetOpacity(double value)
+    {
+        _settings.Opacity = value;      // 세터가 0.6~1.0 으로 자른다
+        Opacity = _settings.Opacity;
+        _openSettings?.SyncOpacity();   // 팝오버가 열려 있으면 슬라이더도 따라온다
+        MarkSettingsDirty();
+    }
+
+    private void RememberTheme()
+    {
+        _settings.Theme = _theme.Mode.ToString().ToLowerInvariant();
+        MarkSettingsDirty();
+    }
+
+    /// <summary>
+    /// 설정 팝오버(§11). 이미 열려 있으면 앞으로 가져온다 — 버튼을 두 번 눌러 창이 둘이 되면
+    /// 어느 쪽이 진짜인지 알 수 없다.
+    /// </summary>
+    private void OpenSettings()
+    {
+        if (_openSettings is { IsLoaded: true })
+        {
+            _openSettings.Activate();
+            return;
+        }
+
+        var popover = new SettingsWindow(this, _settings);
+        popover.SettingsChanged += () =>
+        {
+            Opacity = _settings.Opacity;
+            Topmost = _settings.Topmost;
+            ApplyTheme();
+            MarkSettingsDirty();
+        };
+        popover.Closed += (_, _) => _openSettings = null;
+        _openSettings = popover;
+        popover.Show();
+    }
+
     /// <summary>지금 시간 폭이 덮는 점 수. 버퍼가 아직 짧으면 가진 만큼이다.</summary>
     private int WindowPointsForWidth() => Math.Max(2, _registry.PointsWithin(_timeWidth));
 
@@ -577,6 +631,7 @@ public partial class MainWindow : Window
     {
         PinButton.Content = Glyph(Icons.Pin);
         ThemeButton.Content = Glyph(Icons.Theme);
+        SettingsButton.Content = Glyph(Icons.Settings);
         MinimizeButton.Content = Glyph(Icons.Minimize);
         CloseButton.Content = Glyph(Icons.Close);
 
@@ -644,7 +699,8 @@ public partial class MainWindow : Window
         _brand.ApplyTheme(palette);
 
         PinButton.Foreground = new SolidColorBrush(Topmost ? palette.Gpu : palette.Dim);
-        foreach (var button in new[] { ThemeButton, MinimizeButton, CloseButton })
+        // 여기 빠지면 Stroke 가 null 로 남아 글리프가 통째로 투명해진다. 버튼을 더할 때 같이 넣는다.
+        foreach (var button in new[] { SettingsButton, ThemeButton, MinimizeButton, CloseButton })
             if (button.Content is Shape shape) shape.Stroke = new SolidColorBrush(palette.Dim);
         if (PinButton.Content is Shape pin) pin.Stroke = new SolidColorBrush(Topmost ? palette.Gpu : palette.Dim);
         if (ResetButton.Content is Shape reset) reset.Stroke = new SolidColorBrush(palette.Fg);
@@ -662,7 +718,17 @@ public partial class MainWindow : Window
     /// </summary>
     private void OnPreviewMouseWheel(object sender, MouseWheelEventArgs e)
     {
-        if ((Keyboard.Modifiers & ModifierKeys.Control) == 0 || e.Delta == 0) return;
+        if (e.Delta == 0) return;
+
+        // Shift+휠 = 불투명도(§9.4). 스크롤이 없는 창이라 가로 스크롤 자리가 비어 있다.
+        if ((Keyboard.Modifiers & ModifierKeys.Shift) != 0)
+        {
+            e.Handled = true;
+            SetOpacity(_settings.Opacity + (e.Delta > 0 ? 0.05 : -0.05));
+            return;
+        }
+
+        if ((Keyboard.Modifiers & ModifierKeys.Control) == 0) return;
         e.Handled = true;
         // 위로 굴리면 확대(짧은 폭), 아래로 굴리면 축소(긴 폭). 지도·편집기와 같은 방향이다.
         SetTimeWidth(TimeWidthLadder.Step(_timeWidth, e.Delta > 0 ? -1 : +1));

@@ -110,6 +110,7 @@
         <Button x:Name="MinimizeButton" Style="{StaticResource ChromeButton}" DockPanel.Dock="Right"/>
         <Button x:Name="ThemeButton" Style="{StaticResource ChromeButton}" DockPanel.Dock="Right"/>
         <Button x:Name="PinButton" Style="{StaticResource ChromeButton}" DockPanel.Dock="Right"/>
+        <Button x:Name="SettingsButton" Style="{StaticResource ChromeButton}" DockPanel.Dock="Right"/>
       </DockPanel>
     </Grid>
 
