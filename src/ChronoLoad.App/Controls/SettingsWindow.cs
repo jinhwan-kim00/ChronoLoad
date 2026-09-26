@@ -52,14 +52,20 @@ public sealed class SettingsWindow : Window
         Topmost = owner.Topmost;
 
         var root = new StackPanel { Margin = new Thickness(18, 16, 18, 16) };
-        root.Children.Add(new TextBlock
+        var header = new DockPanel { Margin = new Thickness(0, 0, 0, 14) };
+        var close = CloseButton(palette);
+        close.MouseLeftButtonUp += (_, _) => Close();
+        DockPanel.SetDock(close, Dock.Right);
+        header.Children.Add(close);
+        header.Children.Add(new TextBlock
         {
             Text = "설정",
             FontSize = 15,
             FontWeight = FontWeights.SemiBold,
             Foreground = Brush(palette.Fg),
-            Margin = new Thickness(0, 0, 0, 14),
+            VerticalAlignment = VerticalAlignment.Center,
         });
+        root.Children.Add(header);
 
         // ── 불투명도 ─────────────────────────────────────────
         var readout = new TextBlock
@@ -151,14 +157,49 @@ public sealed class SettingsWindow : Window
             },
         };
 
-        // 팝오버는 Esc 로 닫힌다. 확인 버튼을 두지 않는 것은 값이 즉시 적용되기 때문이다 —
-        // 미리보기가 곧 결과이므로 "적용"과 "취소"가 가리킬 상태가 없다.
+        // 확인 버튼을 두지 않는 것은 값이 즉시 적용되기 때문이다 — 미리보기가 곧 결과이므로
+        // "적용"과 "취소"가 가리킬 상태가 없다. 닫는 길은 ✕ 와 Esc 둘이다.
+        //
+        // 포커스를 잃으면 닫히게 두었다가 걷어냈다. 불투명도는 <b>본 창을 보면서</b> 맞추는
+        // 값인데, 본 창을 한 번 누르면 설정 창이 사라져 버렸다 — 미리보기를 확인하는 행동이
+        // 곧 창을 닫는 행동이 되면 안 된다.
         PreviewKeyDown += (_, e) => { if (e.Key == Key.Escape) Close(); };
-        Deactivated += (_, _) => Close();
     }
 
     /// <summary>바깥에서 값을 바꿨을 때(<c>Shift</c>+휠) 슬라이더를 따라오게 한다.</summary>
     public void SyncOpacity() => _opacity.Value = Math.Round(_settings.Opacity * 100);
+
+    /// <summary>제목 줄 오른쪽의 ✕. 제목 표시줄의 닫기 버튼과 같은 글리프를 쓴다.</summary>
+    private static Border CloseButton(ThemePalette palette)
+    {
+        var glyph = new System.Windows.Shapes.Path
+        {
+            Data = Rendering.Icons.Close,
+            Stroke = Brush(palette.Dim),
+            StrokeThickness = 1.7,
+            StrokeStartLineCap = PenLineCap.Round,
+            StrokeEndLineCap = PenLineCap.Round,
+            Stretch = Stretch.None,
+            Width = Rendering.Icons.DesignSize,
+            Height = Rendering.Icons.DesignSize,
+            LayoutTransform = new ScaleTransform(12 / Rendering.Icons.DesignSize,
+                                                 12 / Rendering.Icons.DesignSize),
+        };
+
+        var button = new Border
+        {
+            Width = 24,
+            Height = 24,
+            CornerRadius = new CornerRadius(6),
+            Background = Brushes.Transparent,   // 없으면 ✕ 획 위에서만 눌린다
+            Cursor = Cursors.Hand,
+            ToolTip = "닫기 (Esc)",
+            Child = glyph,
+        };
+        button.MouseEnter += (_, _) => glyph.Stroke = Brush(palette.Fg);
+        button.MouseLeave += (_, _) => glyph.Stroke = Brush(palette.Dim);
+        return button;
+    }
 
     private static Grid LabelRow(string text, UIElement trailing, ThemePalette palette)
     {
