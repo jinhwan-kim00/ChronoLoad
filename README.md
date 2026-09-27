@@ -93,6 +93,11 @@ claude mcp add chronoload -- <저장소>\tools\ChronoLoad.McpBridge\bin\Debug\ne
 브리지는 stdio ↔ HTTP 프록시다. HTTP 전송을 직접 지원하는 클라이언트라면
 `http://127.0.0.1:7667/mcp`에 붙어도 된다(토큰 필요, 아래 참조).
 
+> **앱을 새 버전으로 바꿨으면 MCP 클라이언트를 다시 시작한다.** 툴 목록과 파라미터는
+> 클라이언트가 연결할 때 한 번 읽어 두므로, 그대로 두면 새 툴이 보이지 않고 새 파라미터를
+> 넘기면 호출이 실패한다. 배포 패키지를 다시 빌드할 때는 앱과 함께 **브리지(`chronoload-mcp.exe`)도
+> 멈춰야** 폴더를 지울 수 있다 — 클라이언트가 브리지를 붙잡고 있다.
+
 ### 툴
 
 | 툴 | 쓰임 |
@@ -113,6 +118,61 @@ claude mcp add chronoload -- <저장소>\tools\ChronoLoad.McpBridge\bin\Debug\ne
 
 리소스 `chronoload://snapshot` · `chronoload://stats`와
 프롬프트 `analyze_gpu_workload`(병목 진단 템플릿)도 함께 제공한다.
+
+### 분석 흐름
+
+에이전트에게 말로 시키면 된다. 툴 이름을 외울 필요는 없다 — 예:
+
+> ChronoLoad MCP 로 지금 GPU 구성을 보고, 음성 인식 서비스를 8통화로 돌리는 동안 병목이 어디인지 분석해줘.
+> 단계마다 마커를 찍고 끝나면 단계별로 비교해줘.
+
+에이전트가 밟는 순서는 대개 이렇다.
+
+1. **구성 파악** — `describe_capabilities` 로 장치와 센서 계층을, `get_gpu_status` 로 어댑터별 상태와
+   **`aiSignals`** 를 본다. `aiSignals` 는 그 GPU 에서 AI 작업이 **어느 지표에 잡히는지** 알려 준다.
+   제조사·설정마다 다르다(아래 표).
+2. **단계 구분** — 벤치 단계가 바뀔 때마다 `mark("idle")`, `mark("load-8calls")`, `mark("cooldown")` 처럼
+   이름을 찍는다. 리셋과 달리 앞 구간을 잃지 않는다.
+3. **대상 프로세스 기록** — `list_processes(sortBy="gpu")` 로 PID 를 찾고 `watch_process(pid)` 를 건다.
+   그 프로세스의 어댑터별 엔진·CPU·워킹셋이 1초마다 쌓인다.
+4. **비교** — 끝나면 `compare_intervals(["idle","load-8calls","cooldown"], untilNow=true)` 로 단계별 평균·p95·최대·
+   포화 비율을 지표별 한 표로 받는다. 특정 구간만 자세히 보려면 `get_interval_stats(from, to)`.
+5. **모양 확인** — 버스트가 어떻게 생겼는지는 `get_metric_history(metric, deviceKey, windowSeconds)` 로,
+   프로세스 쪽은 `get_process_history(pid)` 로 본다. 점마다 시각이 있어(`startAt` + `offsetsMs`)
+   마커 시각과 초 단위로 맞출 수 있다.
+
+구간 하나만 재면 되는 경우에는 예전 방식도 된다 — `reset_stats(confirm=true, includePrevious=false)` 로
+기준점을 옮기고 부하를 건 뒤 `get_stats_since_reset` 을 부른다.
+
+#### 무엇이 병목인가 — 질문별로 볼 지표
+
+| 질문 | 지표 | 읽는 법 |
+|---|---|---|
+| 연산이 포화됐나 | `GpuUtil`, Intel 은 `GpuRenderCompute` | 평균보다 **`saturatedFraction`**(90% 이상이었던 시간 비율)을 본다. 버스트형 부하는 평균이 포화를 가린다 |
+| 어느 엔진이 일하나 | `Gpu3D` · `GpuCompute` · `GpuCopy` · `GpuVideo` | `aiSignals.primary` 가 가리키는 쪽. HAGS 가 켜진 NVIDIA 는 CUDA 가 `Gpu3D` 로 잡힌다 |
+| VRAM 대역폭이 모자라나 | `GpuMemBusy` (NVIDIA) | 이것이 높은데 `GpuUtil` 이 낮으면 연산이 아니라 대역폭이 병목이다 |
+| 호스트↔GPU 전송이 많나 | `GpuPcieRx`(업로드) · `GpuPcieTx`(다운로드), NVIDIA | `GpuCopy` 는 복사 엔진이 바빴던 **시간**이지 옮긴 **양**이 아니다 |
+| 전력·온도 때문에 클럭이 깎이나 | `GpuThrottlePower` · `GpuThrottleThermal`, `powerLimitPercent` | 구간 평균이 곧 "제한에 걸려 있던 시간 비율"이다. `limitReasons` 에 지금 선 사유가 있다 |
+| VRAM 이 넘쳤나 | `GpuDedicated` · `GpuShared`, `vramExceeded` | 전용이 용량에 붙고 공유가 늘면 시스템 RAM 으로 새는 중이다 |
+| CPU 가 발목을 잡나 | `CpuTotal`, 프로세스별 `cpuPercent` | `get_process_history` 에서 GPU 가 쉬는 틈과 CPU 가 바쁜 틈이 겹치는지 본다 |
+
+#### GPU 마다 다른 점
+
+| | NVIDIA | Intel Arc |
+|---|---|---|
+| 연산 사용률 | `GpuUtil`(NVML, 250ms) | `GpuRenderCompute`(하드웨어 카운터, 250ms) — 3D 와 Compute 를 합친 값 |
+| 엔진별 값(`Gpu3D`·`GpuCompute` 등) | 고르다 | **1초에 한 번이고 튄다.** 어느 엔진인지 가를 때만, 여러 초 평균으로 읽는다 |
+| `GpuMemBusy`, PCIe 송수신 | 있다 | 없다(드라이버가 주지 않는다) |
+| 전력 한도 | 있다 | 없다. 제한 사유(`limitReasons`)는 있다 |
+| 유휴 시 | 늘 깨어 있다 | 절전(`availability: standby`)에 들어가면 온도·전력·클럭이 비는데, 깨우지 않으려는 의도다 |
+
+#### 알아 둘 한계
+
+- **링 버퍼는 15분이다.** 이력·구간 통계·마커 비교는 그 안에서만 된다. 밖으로 나간 부분은 `truncated` 로 알린다.
+  리셋 통계(`get_stats_since_reset`)는 더 길게 누적되지만 15분을 넘으면 분위수가 근사(±0.5%)가 된다(`quantilesExact`)
+- **마커와 프로세스 기록은 앱 메모리에만 있다.** 앱을 다시 켜면 사라진다
+- 프로세스 기록은 최대 8개, 한 번에 최대 1시간, 최근 15분을 보관한다. 프로세스가 끝나도 기록은 남는다
+- 응답이 커질 수 있다. `metric` · `deviceKey` 로 좁혀 부르면 빠르고 읽기도 쉽다
 
 ### 응답을 읽을 때
 
@@ -137,8 +197,8 @@ claude mcp add chronoload -- <저장소>\tools\ChronoLoad.McpBridge\bin\Debug\ne
 - `127.0.0.1` 고정. 외부 바인딩 옵션은 없다
 - 기동 시 임의 토큰을 `%LOCALAPPDATA%\ChronoLoad\mcp.token`에 쓰고 종료 시 지운다
 - `Origin` 헤더 검증(DNS 리바인딩 방어), 토큰 비교는 상수 시간
-- **읽기 전용이 원칙.** 상태를 바꾸는 툴은 `reset_stats` 하나뿐이고,
-  프로세스 종료·우선순위 변경 같은 것은 제공하지 않는다
+- **읽기 전용이 원칙.** 상태를 바꾸는 툴은 `reset_stats` · `mark` · `watch_process` · `unwatch_process` 뿐이고
+  바꾸는 것은 전부 MCP 쪽 메모리(기준점·이름표·기록 목록)다. 프로세스 종료·우선순위 변경 같은 것은 제공하지 않는다
 
 ## 배포 패키지 만들기
 
@@ -158,7 +218,7 @@ build-release framework    :: 런타임 의존 — 작지만 .NET 10 데스크�
 
 | 종류 | 크기 | 받는 사람에게 필요한 것 |
 |---|---:|---|
-| 자체 포함 | 약 122 MB | 없음 |
+| 자체 포함 | 약 123 MB | 없음 |
 | 런타임 의존 | 약 1.8 MB | [.NET 10 데스크톱 런타임](https://dotnet.microsoft.com/download/dotnet/10.0) |
 
 > 다시 빌드하면 그 폴더를 지웠다 새로 만든다. **바로가기로 띄워 둔 앱은 먼저 닫는다** —
