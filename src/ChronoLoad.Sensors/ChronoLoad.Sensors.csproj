@@ -10,4 +10,8 @@
     <ProjectReference Include="..\ChronoLoad.Core\ChronoLoad.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="ChronoLoad.Core.Tests" />
+  </ItemGroup>
+
 </Project>

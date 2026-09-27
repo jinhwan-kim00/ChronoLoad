@@ -318,7 +318,12 @@ public sealed class MetricRegistry
                 return IntervalSummary.Empty(quantiles.Length);
 
             expected = channel[slot].Count;
-            long span = _frames - channel[slot].ResetFrame;
+            // 리셋 이후 이 시리즈에 기록된 칸 수. 프레임 수와 다를 수 있다 — 장치가 등록된 뒤
+            // 샘플 엔진이 버퍼를 다시 잡기까지 몇 프레임은 새 슬롯에 쓰지 않는다. 그 몇 칸 때문에
+            // "프레임 수 ≤ 링 칸 수" 로만 판정하면 재기동 뒤 첫 구간이 내내 근사로 떨어졌다
+            // (실사용 보고: 165초 구간인데 GPU·디스크만 quantilesExact=false). 시리즈가 리셋보다 늦게
+            // 시작했다면 시리즈 전체가 그 구간이다.
+            long span = Math.Min(_frames - channel[slot].ResetFrame, series.Written);
 
             if (span > 0 && span <= series.Count)
             {

@@ -24,6 +24,13 @@ internal static partial class LevelZeroNative
     [LibraryImport("ze_loader.dll", EntryPoint = "zesDeviceGet")]
     public static partial uint DeviceGet(nint driver, ref uint count, nint devices);
 
+    /// <summary>
+    /// PCIe 누적 통계. <c>zes_pci_stats_t</c> 는 <c>stype</c> 헤더가 없다 — timestamp(μs) · replay · packet ·
+    /// rx(B) · tx(B) 가 각 uint64 로 0 부터 놓이고 speed 가 40 에 온다(56바이트).
+    /// </summary>
+    [LibraryImport("ze_loader.dll", EntryPoint = "zesDevicePciGetStats")]
+    public static partial uint PciGetStats(nint device, nint stats);
+
     [LibraryImport("ze_loader.dll", EntryPoint = "zesDevicePciGetProperties")]
     public static partial uint DevicePciGetProperties(nint device, nint properties);
 
@@ -86,6 +93,32 @@ public sealed class LevelZeroTelemetry : IVendorTelemetry
 
     public string Name => "Level Zero";
     public bool IsAvailable { get; private set; }
+
+    /// <summary>진단용. 열린 장치 수.</summary>
+    public int DeviceCount => _devices.Count;
+
+    /// <summary>
+    /// 진단용. PCIe 누적 통계를 원시값으로 읽는다. 드라이버가 지원하는지 가르는 데 쓴다.
+    /// </summary>
+    public IReadOnlyList<(string Name, double Value)> ProbePci(int handle)
+    {
+        var result = new List<(string, double)>();
+        if (!IsAvailable || (uint)handle >= (uint)_devices.Count) return result;
+
+        unsafe { NativeMemory.Clear((void*)_scratch, 64); }
+        uint rc = LevelZeroNative.PciGetStats(_devices[handle].Handle, _scratch);
+        result.Add(("rc", rc));
+        if (rc != LevelZeroNative.Success) return result;
+
+        result.Add(("timestampUs", (ulong)Marshal.ReadInt64(_scratch, 0)));
+        result.Add(("replay", (ulong)Marshal.ReadInt64(_scratch, 8)));
+        result.Add(("packets", (ulong)Marshal.ReadInt64(_scratch, 16)));
+        result.Add(("rxBytes", (ulong)Marshal.ReadInt64(_scratch, 24)));
+        result.Add(("txBytes", (ulong)Marshal.ReadInt64(_scratch, 32)));
+        result.Add(("gen", Marshal.ReadInt32(_scratch, 40)));
+        result.Add(("width", Marshal.ReadInt32(_scratch, 44)));
+        return result;
+    }
 
     public static LevelZeroTelemetry? TryCreate()
     {

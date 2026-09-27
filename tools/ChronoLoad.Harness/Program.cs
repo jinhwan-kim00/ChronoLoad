@@ -14,6 +14,8 @@ using ChronoLoad.Sensors;
 //   --no-watcher    장치 착탈 감시를 끈다
 //   --power-probe   전원 상태만 관찰한다. 센서도 벤더 SDK 도 열지 않으므로 장치를 깨우지 않는다
 //   --igcl-probe    IGCL 원시 텔레메트리를 1초마다 찍는다. --igcl-version=N 으로 구조체 버전을 고정한다
+//   --l0-probe      Level Zero PCIe 누적 통계(송수신 바이트)를 1초마다 찍는다
+//   --watch=이름    그 이름의 프로세스를 watch_process 처럼 1초마다 기록하고 끝에 요약을 찍는다
 
 // dotnet run 이 인식하지 못한 옵션을 앱으로 넘기는 경우가 있어, 숫자로 읽히는 첫 인자를 쓴다.
 int seconds = 10;
@@ -50,6 +52,7 @@ if (args.Contains("--mcp"))
         TelemetryLayers = () => mcpGpu.TelemetryLayers,
         EngineBreakdown = mcpGpu.EngineBreakdown,
         LimitReasons = mcpGpu.LimitReasons,
+        ProcessWatch = mcpGpu.Watch,
         Processes = new ChronoLoad.Mcp.SensorProcessSource(mcpProcesses),
         SamplePeriod = mcpOptions.FastPeriod,
     };
@@ -125,6 +128,59 @@ if (args.Contains("--igcl-probe"))
     return;
 }
 
+// NVML PCIe 처리량 호출이 얼마나 걸리는가. 드라이버가 호출 안에서 구간을 재므로 블로킹일 수 있다.
+if (args.Contains("--nvml-pcie-probe"))
+{
+    var nvml = ChronoLoad.Sensors.Vendor.NvmlTelemetry.TryCreate();
+    if (nvml is null) { Console.Error.WriteLine("NVML 을 열 수 없다."); return; }
+
+    // 연달아 부를 때의 호출 비용(CPU·벽시계). 샘플링 틱처럼 띄엄띄엄 부르면 훨씬 느리다(평균 3.8ms) —
+    // 드라이버가 값을 새로 갱신하느라 기다린다. 이 숫자만 보고 매 틱 부르면 안 된다.
+    {
+        var self = Process.GetCurrentProcess();
+        var cpu0 = self.TotalProcessorTime;
+        var wall = Stopwatch.StartNew();
+        for (int n = 0; n < 200; n++) nvml.ProbePcieCounters(0);
+        self.Refresh();
+        Console.WriteLine($"누적 필드 200회: CPU {(self.TotalProcessorTime - cpu0).TotalMilliseconds / 200:0.000} ms/회 · " +
+                          $"벽시계 {wall.Elapsed.TotalMilliseconds / 200:0.000} ms/회");
+    }
+
+    ulong lastRx = 0, lastTx = 0;
+    long lastStamp = 0;
+    for (int i = 0; i < seconds; i++)
+    {
+        var c = nvml.ProbePcieCounters(0);
+        string rate = lastStamp > 0 && c.StampUs > lastStamp
+            ? $" → rx {(c.Rx - lastRx) / ((c.StampUs - lastStamp) / 1e6) / 1e6:0.0} MB/s · tx {(c.Tx - lastTx) / ((c.StampUs - lastStamp) / 1e6) / 1e6:0.0} MB/s"
+            : "";
+        Console.WriteLine($"{i,3}s 누적 rc={c.RxRc}/{c.TxRc} rx={c.Rx} tx={c.Tx} · {c.Milliseconds:0.00} ms{rate}");
+        (lastRx, lastTx, lastStamp) = (c.Rx, c.Tx, c.StampUs);
+
+        var (rx, tx, ms) = nvml.ProbePcie(0);
+        Console.WriteLine($"     순간 rx={rx} KB/s tx={tx} KB/s · 두 호출 {ms:0.0} ms");
+        await Task.Delay(1000);
+    }
+    return;
+}
+
+// Level Zero 의 PCIe 누적 통계. IGCL 에는 송수신 카운터가 없어 이쪽이 지원하는지 가른다.
+// IGCL 과 한 프로세스에서 함께 열지 않는다 — 같은 로더를 두 주인이 잡는다(§5.4).
+if (args.Contains("--l0-probe"))
+{
+    using var l0 = ChronoLoad.Sensors.Vendor.LevelZeroTelemetry.TryCreate();
+    if (l0 is null) { Console.Error.WriteLine("Level Zero 를 열 수 없다."); return; }
+
+    for (int i = 0; i < seconds; i++)
+    {
+        for (int d = 0; d < l0.DeviceCount; d++)
+            Console.WriteLine($"{i,3}s [{d}] " + string.Join(" ",
+                l0.ProbePci(d).Select(p => $"{p.Name}={p.Value:0.###}")));
+        await Task.Delay(1000);
+    }
+    return;
+}
+
 if (args.Contains("--power-probe"))
 {
     var probe = new ChronoLoad.Sensors.Native.DevicePowerProbe();
@@ -154,11 +210,30 @@ await engine.AddProviderAsync(new NetworkProvider());
 await engine.AddProviderAsync(new DiskProvider());
 bool useVendor = !args.Contains("--no-vendor");
 if (!useVendor) Console.Error.WriteLine("  ! 벤더 텔레메트리 꺼짐 (--no-vendor)");
-await engine.AddProviderAsync(new GpuProvider
+var gpuProvider = new GpuProvider
 {
     UseVendorTelemetry = useVendor,
     TraceVendorCalls = args.Contains("--trace-vendor"),
-});
+};
+await engine.AddProviderAsync(gpuProvider);
+
+// --watch=이름 : 그 이름의 프로세스를 찾아 watch_process 와 같은 기록을 건다(끝에 요약을 찍는다).
+string? watchName = args.FirstOrDefault(a => a.StartsWith("--watch="))?["--watch=".Length..];
+int? watchedPid = null;
+if (watchName is not null)
+    _ = Task.Run(async () =>
+    {
+        for (int attempt = 0; attempt < 20 && watchedPid is null; attempt++)
+        {
+            var found = Process.GetProcessesByName(watchName).FirstOrDefault();
+            if (found is not null && gpuProvider.Watch.Watch(found.Id, TimeSpan.FromMinutes(10)).Info is not null)
+            {
+                watchedPid = found.Id;
+                Console.Error.WriteLine($"  ! {Stamp()} 감시 시작: {watchName} (PID {found.Id})");
+            }
+            else await Task.Delay(500);
+        }
+    });
 
 // §5.7 핫플러그. 장치 착탈을 감지해 재열거를 요청한다.
 
@@ -316,6 +391,21 @@ foreach (var (device, kind, slot) in slots)
     Console.WriteLine(
         $"{kind,-16} │ {st.Count,6} │ {Format(kind, (float)st.Mean),12} │ " +
         $"{Format(kind, st.Min),12} │ {Format(kind, st.Max),12} │ {Format(kind, (float)st.StdDev),12}");
+}
+
+if (watchedPid is { } pid && gpuProvider.Watch.Get(pid) is { } record)
+{
+    Console.WriteLine();
+    Console.WriteLine($"프로세스 감시 — {record.Name} (PID {pid}) · 점 {record.Stamps.Length}개 · 끝남 {record.Ended}");
+    static string Summary(float[] v)
+    {
+        var finite = v.Where(float.IsFinite).ToArray();
+        return finite.Length == 0 ? "—" : $"평균 {finite.Average(x => (double)x):0.0} · 최대 {finite.Max():0.0} · {finite.Length}점";
+    }
+    Console.WriteLine($"  CPU %          {Summary(record.CpuPercent)}");
+    Console.WriteLine($"  워킹셋 MB      {Summary(record.WorkingSetBytes.Select(b => b / 1048576f).ToArray())}");
+    foreach (var ((adapter, family), values) in record.Engines)
+        Console.WriteLine($"  {family,-14} {Summary(values)}  ({adapter})");
 }
 
 Console.WriteLine();

@@ -14,6 +14,16 @@ public struct VendorSample
     /// <summary>메모리 컨트롤러가 바빴던 시간 비율(%). NVML 만 준다.</summary>
     public float MemBusyPercent;
 
+    /// <summary>PCIe 수신(호스트→GPU)·송신(GPU→호스트) B/s. NVML 만 준다. 매 틱.</summary>
+    public float PcieRxBytesPerSecond;
+    public float PcieTxBytesPerSecond;
+
+    /// <summary>렌더+컴퓨트 엔진이 바빴던 시간 비율(%). IGCL 만 준다. 매 틱.</summary>
+    public float RenderComputePercent;
+
+    /// <summary>미디어(디코드·인코드·처리) 엔진이 바빴던 시간 비율(%). IGCL 만 준다. 매 틱.</summary>
+    public float MediaPercent;
+
     /// <summary>드라이버가 강제하는 전력 한도(W). 전체 읽기에서만 채운다.</summary>
     public float PowerLimitWatts;
 
@@ -29,6 +39,10 @@ public struct VendorSample
     {
         UtilPercent = float.NaN,
         MemBusyPercent = float.NaN,
+        RenderComputePercent = float.NaN,
+        PcieRxBytesPerSecond = float.NaN,
+        PcieTxBytesPerSecond = float.NaN,
+        MediaPercent = float.NaN,
         PowerLimitWatts = float.NaN,
         LimitReasons = null,
         MemoryUsedBytes = float.NaN,

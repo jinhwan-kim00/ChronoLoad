@@ -59,28 +59,34 @@ public sealed record AiSignals(
             case "NVIDIA" when hags != false:
                 return new AiSignals(
                     Present(MetricKind.GpuUtil, MetricKind.Gpu3D),
-                    [.. Present(MetricKind.GpuMemBusy, MetricKind.GpuCopy), .. memory, .. Limits()],
+                    [.. Present(MetricKind.GpuMemBusy, MetricKind.GpuCopy, MetricKind.GpuPcieRx, MetricKind.GpuPcieTx),
+                     .. memory, .. Limits()],
                     (hags == true ? "하드웨어 가속 GPU 예약(HAGS)이 켜져 있어" : "HAGS 상태를 모르지만 Windows 11 기본값이 켜짐이라") +
                     " CUDA 는 Compute 가 아니라 3D 엔진으로 잡힌다 — GpuCompute 가 0 이어도 AI 가 안 도는 것이 아니다." +
                     " GpuUtil 은 NVML 의 커널 실행 시간(SM)이라 그래픽과 섞이지 않는다." +
-                    " GpuMemBusy(메모리 컨트롤러)가 높고 GpuUtil 이 낮으면 연산이 아니라 VRAM 대역폭이 병목이다.");
+                    " GpuMemBusy(메모리 컨트롤러)가 높고 GpuUtil 이 낮으면 연산이 아니라 VRAM 대역폭이 병목이다." +
+                    " GpuCopy 는 복사 엔진이 바쁜 시간이고 실제로 오간 바이트는 GpuPcieRx(호스트→GPU)·GpuPcieTx(GPU→호스트)다.");
 
             case "NVIDIA":
                 return new AiSignals(
                     Present(MetricKind.GpuUtil, MetricKind.GpuCompute),
-                    [.. Present(MetricKind.GpuMemBusy, MetricKind.GpuCopy, MetricKind.Gpu3D), .. memory, .. Limits()],
+                    [.. Present(MetricKind.GpuMemBusy, MetricKind.GpuCopy, MetricKind.GpuPcieRx, MetricKind.GpuPcieTx,
+                        MetricKind.Gpu3D), .. memory, .. Limits()],
                     "HAGS 가 꺼져 있어 CUDA 가 Compute_0·Compute_1·Cuda 엔진으로 따로 잡힌다(GpuCompute)." +
                     " DirectML 은 3D 큐를 쓰기도 한다. GpuMemBusy 가 높고 GpuUtil 이 낮으면 VRAM 대역폭 병목이다.");
 
             case "Intel":
                 return new AiSignals(
-                    Present(MetricKind.GpuCompute, MetricKind.Gpu3D, MetricKind.GpuUtil),
+                    Present(MetricKind.GpuRenderCompute, MetricKind.GpuCompute, MetricKind.Gpu3D, MetricKind.GpuUtil),
                     [.. Present(MetricKind.GpuCopy), .. memory, .. Limits()],
-                    discrete
+                    (discrete
                         ? "Arc 외장은 OpenVINO·oneAPI 연산이 Compute(CCS) 엔진에 실린다. 커널에 따라 3D(렌더) 엔진을 쓰기도 한다." +
-                          " GpuCopy 는 호스트↔VRAM 전송이다. GpuUtil 은 IGCL 활동 카운터(250ms, 시간 가중)다."
+                          " GpuCopy 는 호스트↔VRAM 전송이다."
                         : "내장 Arc 는 Neural 엔진이 Compute 자리를 대신한다 — GpuCompute 에 합쳐 센다." +
-                          " 오래된 내장은 추론이 3D(렌더) 엔진에 실린다. 메모리는 공유(시스템 RAM)가 본체다.");
+                          " 오래된 내장은 추론이 3D(렌더) 엔진에 실린다. 메모리는 공유(시스템 RAM)가 본체다.") +
+                    " GpuRenderCompute 는 하드웨어 활동 카운터(250ms, 시간 가중)로 3D+Compute 를 합친 값이라 믿을 만하다." +
+                    " GpuCompute·Gpu3D 는 PDH 엔진 값(1초)이라 긴 작업이 끝날 때 몰아서 계상돼 0 과 100 을 오갈 수 있다 —" +
+                    " 어느 엔진인지를 가를 때만 쓰고, 여러 초의 평균으로 읽는다. GpuVideo 도 IGCL 미디어 활동(250ms)이다.");
 
             case "AMD":
                 return new AiSignals(

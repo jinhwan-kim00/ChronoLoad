@@ -89,6 +89,12 @@ public sealed class GpuProvider : ISensorProvider
     /// </summary>
     public bool TraceVendorCalls { get; init; }
 
+    /// <summary>
+    /// 프로세스별 엔진 기록기(<c>watch_process</c>). 엔진 와일드카드를 읽을 때 감시 중인 PID 몫을 넘긴다 —
+    /// 같은 결과를 나눠 쓰므로 추가 쿼리가 없다.
+    /// </summary>
+    public ProcessWatch Watch { get; } = new();
+
     public ValueTask InitializeAsync(MetricRegistry registry, CancellationToken cancellationToken)
     {
         _registry = registry;
@@ -217,7 +223,7 @@ public sealed class GpuProvider : ISensorProvider
                  MetricKind.GpuTemp, MetricKind.GpuPower, MetricKind.GpuClock,
                  MetricKind.Gpu3D, MetricKind.GpuCopy, MetricKind.GpuVideo, MetricKind.GpuMemBusy,
                  MetricKind.GpuPowerLimit, MetricKind.GpuThrottlePower, MetricKind.GpuThrottleThermal,
-                 MetricKind.GpuThrottleOther]);
+                 MetricKind.GpuThrottleOther, MetricKind.GpuRenderCompute, MetricKind.GpuPcieRx, MetricKind.GpuPcieTx]);
 
             var accelerator = new Accelerator
             {
@@ -239,6 +245,9 @@ public sealed class GpuProvider : ISensorProvider
                 ThrottlePowerSlot = handle.SlotOf(MetricKind.GpuThrottlePower),
                 ThrottleThermalSlot = handle.SlotOf(MetricKind.GpuThrottleThermal),
                 ThrottleOtherSlot = handle.SlotOf(MetricKind.GpuThrottleOther),
+                RenderComputeSlot = handle.SlotOf(MetricKind.GpuRenderCompute),
+                PcieRxSlot = handle.SlotOf(MetricKind.GpuPcieRx),
+                PcieTxSlot = handle.SlotOf(MetricKind.GpuPcieTx),
             };
 
             BindVendor(accelerator, known);
@@ -520,6 +529,7 @@ public sealed class GpuProvider : ISensorProvider
             if (accelerator.PowerState == DevicePowerState.Off)
             {
                 accelerator.HasVendorUtil = false;
+                accelerator.HasVendorMedia = false;
                 if (full)
                 {
                     writer.WriteUnavailable(accelerator.TempSlot);
@@ -535,6 +545,7 @@ public sealed class GpuProvider : ISensorProvider
             }
 
             float util = float.NaN, memBusy = float.NaN, temp = float.NaN, power = float.NaN, clock = float.NaN;
+            float renderCompute = float.NaN, media = float.NaN, pcieRx = float.NaN, pcieTx = float.NaN;
             float powerLimit = float.NaN;
             GpuLimitReasons? reasons = null;
             foreach (var binding in accelerator.Vendors)
@@ -552,6 +563,10 @@ public sealed class GpuProvider : ISensorProvider
 
                 if (float.IsNaN(util)) util = sample.UtilPercent;
                 if (float.IsNaN(memBusy)) memBusy = sample.MemBusyPercent;
+                if (float.IsNaN(renderCompute)) renderCompute = sample.RenderComputePercent;
+                if (float.IsNaN(media)) media = sample.MediaPercent;
+                if (float.IsNaN(pcieRx)) pcieRx = sample.PcieRxBytesPerSecond;
+                if (float.IsNaN(pcieTx)) pcieTx = sample.PcieTxBytesPerSecond;
                 if (float.IsNaN(temp)) temp = sample.TemperatureCelsius;
                 if (float.IsNaN(power)) power = sample.PowerWatts;
                 if (float.IsNaN(clock)) clock = sample.CoreClockMegahertz;
@@ -567,6 +582,11 @@ public sealed class GpuProvider : ISensorProvider
             accelerator.HasVendorUtil = !float.IsNaN(util);
             if (accelerator.HasVendorUtil) writer.Write(accelerator.UtilSlot, util);
             if (!float.IsNaN(memBusy)) writer.Write(accelerator.MemBusySlot, memBusy);
+            if (!float.IsNaN(renderCompute)) writer.Write(accelerator.RenderComputeSlot, renderCompute);
+            if (!float.IsNaN(pcieRx)) writer.Write(accelerator.PcieRxSlot, pcieRx);
+            if (!float.IsNaN(pcieTx)) writer.Write(accelerator.PcieTxSlot, pcieTx);
+            accelerator.HasVendorMedia = !float.IsNaN(media);
+            if (accelerator.HasVendorMedia) writer.Write(accelerator.VideoSlot, media);
 
             if (!float.IsNaN(temp)) writer.Write(accelerator.TempSlot, temp);
             if (!float.IsNaN(power)) writer.Write(accelerator.PowerSlot, power);
@@ -635,15 +655,24 @@ public sealed class GpuProvider : ISensorProvider
 
         foreach (var accelerator in _accelerators.Values) accelerator.EngineGroups.Clear();
 
+        bool watching = Watch.Any;
+        if (watching) Watch.BeginEngines();
+
         _engine.Read((instance, value) =>
         {
+            if (!IsPlausibleEngineValue(value)) return;
+
             string? token = ParseLuidToken(instance);
             if (token is null || !_accelerators.TryGetValue(token, out var accelerator)) return;
 
             string group = ParseEngineType(instance);
             accelerator.EngineGroups.TryGetValue(group, out double sum);
             accelerator.EngineGroups[group] = sum + value;
+
+            if (watching) Watch.AddEngine(instance, accelerator.Handle.Key, group, value);
         }, noCap100: true);
+
+        if (watching) Watch.Commit(DateTime.UtcNow.Ticks);
 
         var breakdown = new Dictionary<string, IReadOnlyDictionary<string, double>>(StringComparer.OrdinalIgnoreCase);
         Span<double> families = stackalloc double[4];   // 3D · Compute · Copy · Video
@@ -673,7 +702,7 @@ public sealed class GpuProvider : ISensorProvider
             writer.Write(accelerator.Graphics3DSlot, (float)families[0]);
             writer.Write(accelerator.ComputeSlot, (float)families[1]);
             writer.Write(accelerator.CopySlot, (float)families[2]);
-            writer.Write(accelerator.VideoSlot, (float)families[3]);
+            if (!accelerator.HasVendorMedia) writer.Write(accelerator.VideoSlot, (float)families[3]);
 
             breakdown[accelerator.Handle.Key] = types;
         }
@@ -696,6 +725,13 @@ public sealed class GpuProvider : ISensorProvider
     /// <summary>어댑터(장치 키)의 엔진 종류별 최근 사용률. <c>get_gpu_status(verbose)</c> 가 보고한다.</summary>
     public IReadOnlyDictionary<string, double>? EngineBreakdown(string deviceKey) =>
         _engineBreakdown.GetValueOrDefault(deviceKey);
+
+    /// <summary>
+    /// PDH 엔진 사용률이 믿을 만한 범위인가. B580 에 OpenCL 연산을 걸자 한 인스턴스가 1.8e14 를 냈다 —
+    /// 100 으로 자르면 "그 1초는 포화"라는 거짓 표본이 된다. 한 인스턴스가 한 구간에 낼 수 있는 값은
+    /// 계상이 몰려도 몇 배 수준이므로, 그보다 크면 그 인스턴스를 이번 표본에서 뺀다.
+    /// </summary>
+    internal static bool IsPlausibleEngineValue(double value) => double.IsFinite(value) && value is >= 0 and <= 1000;
 
     /// <summary>인스턴스명 예: <c>pid_4_luid_0x00000000_0x000180A3_phys_0_eng_0_engtype_Neural</c>.</summary>
     private static string? ParseLuidToken(string instance)
@@ -808,6 +844,7 @@ public sealed class GpuProvider : ISensorProvider
 
     public void Dispose()
     {
+        Watch.Dispose();
         foreach (var vendor in _vendors) vendor.Dispose();
         _vendors.Clear();
         _engine?.Dispose();
@@ -853,6 +890,15 @@ public sealed class GpuProvider : ISensorProvider
         public int ThrottlePowerSlot { get; init; }
         public int ThrottleThermalSlot { get; init; }
         public int ThrottleOtherSlot { get; init; }
+        public int RenderComputeSlot { get; init; }
+        public int PcieRxSlot { get; init; }
+        public int PcieTxSlot { get; init; }
+
+        /// <summary>
+        /// 벤더 경로가 미디어 활동을 매 틱 주는가. 그러면 PDH 의 1초 Video 계열로 덮어쓰지 않는다 —
+        /// 하드웨어 카운터 쪽이 촘촘하고 튀지 않는다. B580 의 QSV 인코딩은 PDH 에서 copy 로만 잡혔다.
+        /// </summary>
+        public bool HasVendorMedia { get; set; }
         public Memory Pending;
 
         public struct Memory

@@ -226,7 +226,7 @@ public sealed class ProcessProvider : IDisposable
         _engine?.Read((instance, value) =>
         {
             if (!TryParse(instance, out int pid, out string luid, out string engineType)) return;
-            if (value <= 0) return;
+            if (value <= 0 || !GpuProvider.IsPlausibleEngineValue(value)) return;
 
             // 어댑터별로는 엔진 중 최댓값을 쓴다. 엔진 사용률을 더하면 200% 가 나온다 —
             // 3D 와 Copy 가 동시에 도는 것은 두 배로 바쁜 것이 아니다.

@@ -106,6 +106,9 @@ claude mcp add chronoload -- <저장소>\tools\ChronoLoad.McpBridge\bin\Debug\ne
 | `reset_stats` | MCP 쪽 기준점만 옮긴다. 직전 구간을 반환한다(지표·장치로 좁히거나 생략 가능) |
 | `list_processes` | CPU·메모리·GPU·GPU 메모리·디스크 I/O로 정렬. GPU·디스크 정렬은 쓰지 않는 프로세스를 뺀다 |
 | `get_process_detail` | 프로세스 하나의 어댑터별·엔진별 GPU 사용률 |
+| `watch_process` · `get_process_history` · `unwatch_process` | 프로세스 하나의 엔진·CPU·메모리를 1초마다 기록하고 시계열로 읽는다 |
+| `mark` · `list_marks` | 지금 시각에 이름을 붙인다(벤치 단계 시작·끝 등) |
+| `get_interval_stats` · `compare_intervals` | 두 마커(또는 시각) 사이의 통계, 여러 구간을 지표별 한 표로 비교 |
 | `describe_capabilities` | 무엇을 관측할 수 있는지, 지금 샘플 주기는 어떤지 |
 
 리소스 `chronoload://snapshot` · `chronoload://stats`와

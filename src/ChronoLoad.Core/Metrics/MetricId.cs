@@ -42,6 +42,12 @@ public enum MetricKind : byte
     GpuThrottlePower,
     GpuThrottleThermal,
     GpuThrottleOther,
+    // 렌더(3D)+컴퓨트 엔진이 돈 시간 비율 — 하드웨어 활동 카운터(IGCL, 250ms, 시간 가중).
+    // 3D 와 Compute 를 가르지 못하지만 PDH 엔진 값처럼 튀지 않는다(§5.4).
+    GpuRenderCompute,
+    // PCIe 처리량(B/s). Rx = 호스트→GPU(업로드), Tx = GPU→호스트(다운로드). NVML 누적 카운터의 차분.
+    GpuPcieRx,
+    GpuPcieTx,
 }
 
 public static class MetricKindExtensions
@@ -61,10 +67,12 @@ public static class MetricKindExtensions
         MetricKind.CpuTotal or MetricKind.GpuUtil or MetricKind.GpuCompute or MetricKind.DiskActive
             or MetricKind.Gpu3D or MetricKind.GpuCopy or MetricKind.GpuVideo or MetricKind.GpuMemBusy
             or MetricKind.GpuThrottlePower or MetricKind.GpuThrottleThermal or MetricKind.GpuThrottleOther
+            or MetricKind.GpuRenderCompute
             => MetricUnit.Percent,
         // 네트워크는 관례상 비트/초(Mbps), 디스크는 바이트/초(MB/s)로 읽는다.
         MetricKind.NetRx or MetricKind.NetTx => MetricUnit.BitRate,
-        MetricKind.DiskRead or MetricKind.DiskWrite => MetricUnit.ByteRate,
+        MetricKind.DiskRead or MetricKind.DiskWrite or MetricKind.GpuPcieRx or MetricKind.GpuPcieTx
+            => MetricUnit.ByteRate,
         MetricKind.MemUsed or MetricKind.MemCommit or MetricKind.GpuDedicated or MetricKind.GpuShared
             => MetricUnit.Bytes,
         MetricKind.GpuTemp => MetricUnit.Celsius,

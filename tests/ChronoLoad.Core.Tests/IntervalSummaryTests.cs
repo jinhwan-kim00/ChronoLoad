@@ -79,6 +79,32 @@ public class IntervalSummaryTests
         Assert.True(Math.Abs(summary.Quantiles[0] - expected) / expected <= PercentileTracker.RelativeAccuracy + 1e-6);
     }
 
+    /// <summary>
+    /// 실사용 보고: 재기동 직후 165초 구간인데 GPU·디스크만 근사였다. 장치가 등록된 뒤 샘플 엔진이
+    /// 버퍼를 다시 잡기까지 몇 프레임은 새 슬롯에 값이 들어가지 않아, 프레임 수가 시리즈 칸 수보다 컸다.
+    /// </summary>
+    [Fact]
+    public void A_series_that_started_after_the_reset_is_still_exact()
+    {
+        var registry = new MetricRegistry(seriesCapacity: 256);
+        var cpu = registry.Register(
+            new DeviceInfo("cpu", DeviceClass.System, "CPU", "CPU", IconKind.Cpu), [MetricKind.CpuTotal]);
+
+        // GPU 는 뒤늦게 등록된다. 그 뒤 두 프레임은 버퍼가 아직 옛 크기라 GPU 칸에 쓰지 않는다.
+        registry.CommitAll([1f]);
+        var gpu = registry.Register(
+            new DeviceInfo("gpu:luid_1", DeviceClass.Gpu, "GPU", "GPU", IconKind.GpuNvidia), [MetricKind.GpuUtil]);
+        registry.CommitAll([1f]);
+        registry.CommitAll([1f]);
+        for (int i = 1; i <= 100; i++) registry.CommitAll([1f, i]);
+
+        var summary = registry.Summarize(gpu.SlotOf(MetricKind.GpuUtil), StatsScope.Mcp, [0.95]);
+
+        Assert.True(summary.Exact);
+        Assert.Equal(95, summary.Quantiles[0]);
+        Assert.True(registry.Summarize(cpu.SlotOf(MetricKind.CpuTotal), StatsScope.Mcp, [0.5]).Exact);
+    }
+
     [Fact]
     public void Empty_interval_is_nan()
     {

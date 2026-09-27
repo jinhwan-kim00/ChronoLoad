@@ -1,5 +1,8 @@
 using System.Net;
 using System.Net.Sockets;
+using System.Text.Encodings.Web;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
@@ -43,6 +46,28 @@ public sealed class McpHost : IAsyncDisposable
     /// <b>포트 문제가 아닌 실패에서는 옮기지 않는다</b> — 권한이나 설정 탓이면 번호를
     /// 열 번 바꿔 봐야 같은 이유로 열 번 실패할 뿐이다.
     /// </remarks>
+    /// <summary>
+    /// 툴 인자·응답의 JSON 옵션. SDK 기본값을 복사해 두 가지만 바꾼다.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b><c>null</c> 을 지우지 않는다.</b> SDK 기본값은 <c>null</c> 필드를 통째로 생략한다. 그러면 §10.4 의
+    /// "값이 없으면 null" 이 전선 위에서 사라진다 — 에이전트는 <c>computePercent</c> 가 null 인지
+    /// 그런 필드가 없는 것인지 가를 수 없다. 툴 메서드를 직접 부르는 테스트로는 보이지 않았고,
+    /// 서버를 세워 JSON-RPC 로 불러 보고서야 드러났다(<c>McpWireTests</c>).
+    /// </para>
+    /// <para>
+    /// <b>한글을 이스케이프하지 않는다.</b> 기본 인코더는 비ASCII 를 전부 <c>\uXXXX</c> 로 바꿔 한 글자가
+    /// 6바이트가 된다. 응답의 설명 문장(<c>note</c> 등)이 한글이라 그만큼 부풀었다. 루프백으로 에이전트에게만
+    /// 가는 JSON 이라 HTML 이스케이프가 필요 없다.
+    /// </para>
+    /// </remarks>
+    internal static readonly JsonSerializerOptions ToolJson = new(ModelContextProtocol.McpJsonUtilities.DefaultOptions)
+    {
+        DefaultIgnoreCondition = JsonIgnoreCondition.Never,
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+    };
+
     public static async Task<McpHost?> StartAsync(McpContext context, int port = DefaultPort)
     {
         var host = new McpHost();
@@ -80,10 +105,12 @@ public sealed class McpHost : IAsyncDisposable
                     Version = typeof(McpHost).Assembly.GetName().Version?.ToString(3) ?? "0.1.0",
                 })
                 .WithHttpTransport()
-                .WithTools<ChronoLoadTools>()
-                .WithTools<ProcessTools>()
+                .WithTools<ChronoLoadTools>(ToolJson)
+                .WithTools<ProcessTools>(ToolJson)
+                .WithTools<IntervalTools>(ToolJson)
+                .WithTools<ProcessWatchTools>(ToolJson)
                 .WithResources<McpResources>()
-                .WithPrompts<McpPrompts>();
+                .WithPrompts<McpPrompts>(ToolJson);
 
             // 토큰은 메모리에서 먼저 만들고, 포트를 실제로 잡은 뒤에야 파일로 쓴다.
             // 순서를 바꾸면 두 번째 인스턴스가 포트 충돌로 실패하면서

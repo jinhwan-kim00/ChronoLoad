@@ -40,6 +40,12 @@ public sealed class McpContext(MetricRegistry registry, SampleEngine engine)
     /// <summary>프로세스 목록 제공자. 없으면 프로세스 툴이 <c>unavailable</c> 을 돌려준다.</summary>
     public IProcessSource? Processes { get; init; }
 
+    /// <summary>프로세스별 시계열 기록기(<c>watch_process</c>). 없으면 그 툴들이 unavailable 을 돌려준다.</summary>
+    public ChronoLoad.Sensors.ProcessWatch? ProcessWatch { get; init; }
+
+    /// <summary>구간 마커(<c>mark</c>). 앱 메모리에만 있다.</summary>
+    public MarkerBook Markers { get; } = new();
+
     /// <summary>샘플 주기. 응답의 시간 해상도를 에이전트가 알아야 한다.</summary>
     public TimeSpan SamplePeriod { get; init; } = TimeSpan.FromMilliseconds(250);
 

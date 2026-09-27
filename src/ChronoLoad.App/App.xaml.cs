@@ -94,6 +94,7 @@ public partial class App : Application
             TelemetryLayers = () => gpu.TelemetryLayers,
             EngineBreakdown = gpu.EngineBreakdown,
             LimitReasons = gpu.LimitReasons,
+            ProcessWatch = gpu.Watch,
             Processes = new Mcp.SensorProcessSource(_processes),
             SamplePeriod = options.FastPeriod,
         };

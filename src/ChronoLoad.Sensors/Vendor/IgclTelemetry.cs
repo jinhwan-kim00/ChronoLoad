@@ -25,6 +25,10 @@ internal static partial class IgclNative
     public const int ItemGpuTemperature = 104;
     /// <summary>GPU 가 무엇이든 하고 있던 누적 시간(초). 타임스탬프와의 기울기가 곧 사용률이다.</summary>
     public const int ItemGlobalActivity = 128;
+    /// <summary>렌더(3D)+컴퓨트 엔진의 누적 활동 시간(초).</summary>
+    public const int ItemRenderComputeActivity = 152;
+    /// <summary>미디어 엔진의 누적 활동 시간(초).</summary>
+    public const int ItemMediaActivity = 176;
 
     // ctl_oc_telemetry_item_t 내부 오프셋
     public const int ItemSupported = 0;     // bool
@@ -296,6 +300,29 @@ public sealed class IgclTelemetry : IVendorTelemetry
         {
             sample.UtilPercent = (float)util;
             any = true;
+        }
+
+        // 엔진 그룹별 활동도 같은 구조체에 온다. PDH 엔진 카운터는 1초에 한 번뿐이고 값이 튄다 —
+        // B580 에 OpenCL 연산을 걸면 1초 간격 compute 가 1.8e14(쓰레기), 53.2, 143.8, 없음 순으로 나왔다
+        // (실사용 보고도 같다: GpuUtil 99.9% 일정한데 GpuCompute 가 0↔100). 같은 때 이 카운터는 렌더+컴퓨트
+        // 99.5%, 전체 100% 로 고르다. 하드웨어가 세는 누적 시간이라 매 틱 읽어도 구간 전체의 평균이다.
+        // IGCL 의 엔진 그룹은 전체·렌더+컴퓨트·미디어 셋뿐이라 3D 와 Compute, Copy 는 가르지 못한다.
+        //
+        // 그룹 카운터는 그룹 안 엔진들의 활동 시간 합이다. QSV 인코딩에서 미디어가 1초에 2.02초씩 올랐다
+        // (엔진 둘). 엔진별로 나눌 방법이 없으므로 100 으로 자른다 — 100 은 "엔진 하나 몫 이상 바빴다"이다.
+        if (ActivityPercent(ref device.RenderComputeTick, ReadItem(IgclNative.ItemRenderComputeActivity), stamp) is { } renderCompute)
+            sample.RenderComputePercent = (float)renderCompute;
+        if (ActivityPercent(ref device.MediaTick, ReadItem(IgclNative.ItemMediaActivity), stamp) is { } media)
+            sample.MediaPercent = (float)media;
+
+        // 전체(global) 카운터는 미디어를 세지 않는다 — 같은 QSV 인코딩에서 전체 17%, 미디어 200%.
+        // 사용률의 정의는 "무엇이든 돈 시간"이므로 세 그룹 중 가장 바쁜 쪽을 쓴다.
+        if (!float.IsNaN(sample.UtilPercent))
+        {
+            if (!float.IsNaN(sample.RenderComputePercent))
+                sample.UtilPercent = Math.Max(sample.UtilPercent, sample.RenderComputePercent);
+            if (!float.IsNaN(sample.MediaPercent))
+                sample.UtilPercent = Math.Max(sample.UtilPercent, sample.MediaPercent);
         }
 
         if (!full) return any;
@@ -604,6 +631,10 @@ public sealed class IgclTelemetry : IVendorTelemetry
 
         /// <summary>매 읽기의 활동 기준선 — 사용률용.</summary>
         public ActivityBaseline Tick;
+
+        /// <summary>렌더+컴퓨트·미디어 활동 기준선 — 매 읽기.</summary>
+        public ActivityBaseline RenderComputeTick;
+        public ActivityBaseline MediaTick;
 
         /// <summary>전체 읽기(1초)의 활동 기준선 — 클럭이 돌고 있었는지 판단용.</summary>
         public ActivityBaseline Full;

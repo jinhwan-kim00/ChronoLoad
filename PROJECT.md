@@ -2,7 +2,7 @@
 
 > GPU 워크로드 중심의 실시간 시스템 모니터. WPF 세로형 위젯 + MCP 서버.
 
-- **문서 버전**: 1.37 — 개정 이력은 [`CHANGE_LOG.md`](CHANGE_LOG.md)
+- **문서 버전**: 1.38 — 개정 이력은 [`CHANGE_LOG.md`](CHANGE_LOG.md)
 - **최초 작성**: 2026-09-23 · **최종 갱신**: 2026-09-27
 - **대상 런타임**: .NET 10 (`net10.0-windows`), Windows 10 20H2 이상 / Windows 11
 - **UX 시각 설계서**: [`docs/ux-design.html`](docs/ux-design.html) — 브라우저로 열면 라이브 목업이 동작합니다
@@ -307,12 +307,21 @@ public sealed record DeviceInfo(
   |---|---|---|---|
   | NVIDIA · **HAGS 켜짐**(Windows 11 기본) | **`3d`** — `Compute_0`·`Cuda` 노드가 따로 보고되지 않고 3D 노드 하나로 합쳐진다. 커널 실행 시간은 NVML `GpuUtil`(SM) | `GpuMemBusy`, `GpuCopy`, 전용 메모리, 전력·클럭 | RTX 5080 실측: CUDA 필터(`bilateral_cuda`) 중 `3d` 94.9%·`copy` 2.4%, `compute` 인스턴스 없음. 하네스로 `GpuUtil` 최대 97%·`Gpu3D` 최대 97.1%·`GpuCompute` 0% |
   | NVIDIA · HAGS 꺼짐 | `Compute_0`·`Compute_1`·`Cuda` | 위와 같음 | 공개 보고 — HAGS 를 끄면 Cuda 그래프가 돌아온다 |
-  | Intel Arc 외장 | `compute`(CCS). 커널에 따라 `3d`(렌더) | `GpuCopy`(호스트↔VRAM), 전용 메모리 | B580 엔진 목록 `3d · compute · copy · videodecode · videoprocessing · gsc` |
+  | Intel Arc 외장 | `compute`(CCS). 커널에 따라 `3d`(렌더). **하드웨어 카운터 `GpuRenderCompute`(250ms)가 믿을 만하다** — PDH 엔진 값은 튄다(아래 Intel 주의점 8) | `GpuCopy`(호스트↔VRAM), 전용 메모리 | B580 엔진 목록 `3d · compute · copy · videodecode · videoprocessing · gsc` |
   | Intel Arc 내장 | **`Neural`** 이 `compute` 자리를 대신한다. 오래된 내장은 렌더(`3d`) | 공유 메모리 | 사용자 실측(Arc 내장). NPU 의 `neural` 과 이름이 같지만 NPU 판정은 "엔진이 `neural` 뿐"이라 겹치지 않는다 |
   | AMD | `Compute_N`, `High Priority Compute`. DirectML 은 3D 큐를 쓰기도 한다 | `GpuCopy`, 전용 메모리 | |
   | NPU | `neural` 하나 | 공유 메모리 | |
 
   HAGS 는 어댑터마다 `D3DKMT_WDDM_2_7_CAPS.HwSchEnabled`(`KMTQAITYPE` 70)로 읽어 부가 정보 `hardwareScheduling` 에 둔다(이 PC: RTX 5080·B580 둘 다 `true`, NPU 는 D3DKMT 미열거라 `unknown`). MCP 는 이 표를 어댑터마다 **`aiSignals`**(`primary`·`supporting`·`note`)로 준다(§10.2). 엔진 인스턴스를 보고 정하지 않는 것은, PDH 엔진 인스턴스가 그 엔진을 쓰는 프로세스가 있을 때만 나타나 유휴 때는 판단할 근거가 없기 때문이다
+
+- **PCIe 처리량 `GpuPcieRx`·`GpuPcieTx`** (B/s): Rx = 호스트→GPU(업로드), Tx = GPU→호스트(다운로드). 복사 엔진 사용률(`GpuCopy`)은 엔진이 바빴던 **시간**이지 옮긴 **양**이 아니다 — 실측으로 `GpuCopy` 최대 28.8% 인 구간에 PCIe 는 5 GB/s 였다
+
+  | 경로 | 결과 |
+  |---|---|
+  | NVML `nvmlDeviceGetFieldValues` 의 누적 바이트 필드 197(TX)·198(RX) | **쓴다.** 차분이라 두 읽기 사이의 평균이다. 1초마다 **샘플링 스레드 밖의 전용 타이머**가 읽는다 — 따로 부르면 0.02~0.7ms 인데 샘플링 틱 안에서는 평균 3.8ms 가 걸렸고(드라이버가 값을 갱신하느라 기다린다), 매 틱 읽었더니 듀티 사이클이 0.92% → 2.30% 로 올랐다(같은 조건 A/B). 타이머로 옮긴 뒤 0.88~0.89%. 카운터가 줄면(되감김) 그 표본은 버린다 |
+  | NVML `nvmlDeviceGetPcieThroughput` | 쓰지 않는다. 호출 안에서 짧은 구간을 재는 블로킹 호출이라 RX·TX 두 번에 55~75ms, 값은 그 순간의 창이라 1초 사이에 2 MB/s ↔ 341 MB/s 로 튄다 |
+  | IGCL | **없다.** `ctl_pci_state_t` 는 링크 세대·폭·최대 대역폭뿐이다 |
+  | Level Zero `zesDevicePciGetStats` | 누적 rx/tx 바이트가 있지만 Windows B580 에서 `0x78000003`(`ZE_RESULT_ERROR_UNSUPPORTED_FEATURE`). 하네스 `--l0-probe` 로 확인 |
 
 - **`GpuMemBusy`**: NVML `utilization.memory` — 메모리 컨트롤러가 VRAM 을 읽고 쓴 시간 비율(%). `nvmlDeviceGetUtilizationRates` 한 번에 SM 사용률과 함께 오므로 **추가 호출 없이** 매 틱 받는다. `GpuUtil` 이 낮은데 이것이 높으면 연산이 아니라 VRAM 대역폭이 병목이다(LLM 디코드가 전형). 실측: CUDA 필터 부하에서 SM 99%·메모리 4~7% — 연산에 묶인 부하. NVIDIA 외에는 값이 없다(IGCL 의 VRAM 대역폭 카운터는 B580 에서 `bSupported=false`)
 
@@ -378,8 +387,9 @@ Intel은 iGPU와 Arc dGPU를 같은 API 계열로 다룰 수 있어 투자 대�
    `*_ALL` 그룹과 개별 인스턴스 그룹이 함께 열거되므로 **둘을 합산하면 두 배가 된다**. `*_ALL`이 있으면 그것만 쓴다.
 4. **iGPU는 UMA라 전용 VRAM이 0~512MB다.** 외장/내장 임계값(1 GiB)에 자연히 내장으로 분류되고 차트는 공유 메모리 기준으로 그려진다. **Arc dGPU는 8~16GB 전용 VRAM이라 외장으로 분류**되어 스필오버 경고 대상이 된다.
 5. **하이브리드 노트북에서는 iGPU가 디스플레이만 담당하고 연산은 dGPU가 한다.** iGPU 카드를 기본 접힘으로 두는 근거다.
-6. **사용률은 `ctlPowerTelemetryGet` 의 `globalActivityCounter` 로 매 틱 구한다.** 누적 활동 초를 타임스탬프로 나눈 기울기라 두 읽기 사이 **전 구간의 시간 가중 평균**이다 — 250ms 사이의 버스트가 빠짐없이 들어간다. PDH 엔진 와일드카드는 1초에 한 번뿐이라, 이것이 없으면 Intel 어댑터만 사용률이 1초 해상도였다. 정의도 NVML 과 같다(무엇이든 돈 시간의 비율). 온도·전력·클럭은 그대로 1초에 한 번이다
+6. **사용률은 `ctlPowerTelemetryGet` 의 활동 카운터로 매 틱 구한다.** 누적 활동 초를 타임스탬프로 나눈 기울기라 두 읽기 사이 **전 구간의 시간 가중 평균**이다 — 250ms 사이의 버스트가 빠짐없이 들어간다. 같은 구조체에 그룹이 셋 온다: 전체(`globalActivityCounter`, 오프셋 128)·렌더+컴퓨트(152)·미디어(176). **전체는 미디어를 세지 않는다** — QSV 인코딩에서 전체 17%, 미디어 200%. 그래서 `GpuUtil` 은 세 그룹의 최댓값이다(무엇이든 돈 시간 — NVML 과 같은 정의). 렌더+컴퓨트는 `GpuRenderCompute` 로, 미디어는 `GpuVideo` 로 매 틱 적는다(PDH 의 1초 Video 계열을 덮는다 — B580 의 QSV 인코딩은 PDH 에서 `copy` 로만 잡혔다). **그룹 카운터는 그룹 안 엔진들의 활동 시간 합이라**(미디어가 1초에 2.02초 = 엔진 둘) 100 으로 자른다 — 100 은 "엔진 하나 몫 이상 바빴다"이다. IGCL 의 엔진 그룹은 이 셋뿐이라 3D·Compute·Copy 를 가르지 못한다. 온도·전력·클럭은 그대로 1초에 한 번이다
 7. **클럭은 직전 1초 활동이 0.5% 이상일 때만 낸다.** `gpuCurrentClockFrequency` 는 렌더 블록이 절전(RC6)에 들어가 있어도 마지막 요청 주파수를 돌려준다 — 실사용에서 유휴 B580 이 2850 MHz(최대)로 고정돼 보였다. 이 PC 실측: 깨어난 직후 첫 읽기가 2850 MHz·1.035 V, 이어서 400 MHz·0.74 V, QSV 인코딩 부하에서 550 → 1950 MHz. 돌고 있는 클럭이 없을 때는 값을 비운다(`null`). 0 은 측정값이 아니다. 구조체 버전 1 의 `gpuEffectiveClock` 은 B580 이 지원하지 않는다(`bSupported=false`)
+8. **PDH 엔진 값을 Intel 에서 믿지 않는다.** B580 에 OpenCL 연산(ffmpeg `avgblur_opencl`)을 걸자 PDH `compute` 가 1초 간격으로 **1.8e14(쓰레기), 53.2, 143.8, 인스턴스 없음** 순으로 나왔다. 같은 때 하드웨어 카운터는 전체 100%·렌더+컴퓨트 99.5% 로 고르다 — 실사용 보고("GpuUtil 99.9% 일정한데 GpuCompute 가 0↔100")를 그대로 재현한 것이다. 하네스 실측 14초: `GpuRenderCompute` 평균 99.5%(최소 96.7%), PDH `GpuCompute` 평균 3.5%(최대 49%). 한 인스턴스가 1000 을 넘기면 그 표본에서 뺀다 — 100 으로 자르면 "그 1초는 포화"라는 거짓 표본이 된다. PDH 계열 값은 어느 엔진인지를 가를 때만 쓰고 여러 초의 평균으로 읽는다. NVIDIA 는 PDH 값이 고르다(CUDA 부하 1초 간격 95.7~97.7%)
 
 *계층 B′ — `D3DKMTQueryStatistics` (벤더 무관 보조)*
 어댑터 세그먼트별 메모리(로컬/논로컬)를 PDH보다 정확하게 분해한다. 특히 Intel에서 UMA를 다루는 방식이 모호할 때 교차검증용.
@@ -426,6 +436,7 @@ Intel은 iGPU와 Arc dGPU를 같은 API 계열로 다룰 수 있어 투자 대�
 - `NtQuerySystemInformation(SystemProcessInformation)` 1회로 전 프로세스 CPU/메모리/스레드/핸들
 - GPU는 `GPU Engine(pid_*)` / `GPU Process Memory(pid_*)` 파싱 후 PID 조인. **인스턴스명의 LUID로 어댑터별 분해**까지 제공
 - 기본 2초, **MCP 요청이 없으면 수집하지 않는다**(마지막 요청 후 60초 뒤 중단)
+- **프로세스별 시계열(`watch_process`)** — 지정한 PID(최대 8개, 최대 1시간)의 어댑터별 엔진 계열·CPU%·워킹셋을 1초마다 기록한다(15분 보관). **추가 쿼리가 없다** — 엔진 값은 GPU 프로바이더가 어댑터 사용률을 구하려고 1초마다 읽는 `GPU Engine(*)` 결과에서 감시 중인 PID 몫만 떼어 온다. CPU·워킹셋은 열어 둔 핸들로 `GetProcessTimes`·`K32GetProcessMemoryInfo`. 감시 있음/없음 듀티 사이클 0.90~0.98% 로 차이가 없다. 처음 보는 엔진은 앞 칸을 `null`(몰랐다)로, 이후 인스턴스가 없는 칸은 0(안 썼다)으로 둔다. 프로세스가 끝나도 기록은 남는다. 엔진 값은 PDH 라 Intel 에서는 §5.4 Intel 주의점 8 의 성질을 그대로 갖는다
 - **멈춰 있던 수집을 켤 때는 기준선을 잡고 1초 뒤 한 번 더 수집한 다음에 답한다.** CPU·디스크는 두 수집의 차분이라 기준선만 있는 표는 비율을 모른다. 전에는 그 표를 그대로 돌려줘, 한동안 부르지 않다가 부르면 전부 0 이었다 — 에이전트는 "다 놀고 있다"로 읽었다. 직전 수집에 없던 프로세스(방금 뜬 것)의 비율은 **`null`** 이다
 
 ### 5.7 `DeviceWatcher` — 장치 변경 실시간 반영 (R17) ✅ 구현됨
@@ -588,7 +599,8 @@ public struct StatsAccumulator
 ```
 - O(1) 갱신, 고정 메모리
 - **분위수(p50·p95·p99)는 두 경로다.** 리셋 이후 프레임이 링 길이(15분) 안이면 링에 그 구간의 실측 표본이 전부 남아 있으므로 **정렬해서 정확히** 구한다(최근접 순위). 넘치면 **상대 오차 ±0.5% 로그 버킷 스케치**(DDSketch 방식)로 근사한다. 어느 쪽이든 답은 관측된 최솟값~최댓값 안으로 자르고, 양 끝 순위는 버킷이 아니라 실제 최솟값·최댓값이다. 어느 경로였는지는 MCP 응답의 `quantilesExact` 가 말한다
-  - 리셋 시점의 프레임 번호를 `StatsAccumulator.ResetFrame` 에 둔다. 링에서 떠낸 실측 표본 수가 누산기의 `Count` 와 다르면 정확하다고 주장하지 않고 스케치로 돌아간다
+  - 리셋 시점의 프레임 번호를 `StatsAccumulator.ResetFrame` 에 둔다. 링에서 떠낼 칸 수는 "리셋 이후 프레임 수"와 "시리즈에 기록된 칸 수" 중 작은 쪽이다 — 장치가 등록된 뒤 샘플 엔진이 버퍼를 다시 잡기까지 몇 프레임은 새 슬롯에 쓰지 않으므로, 프레임 수만 보면 재기동 뒤 첫 구간이 리셋 전까지 내내 근사로 떨어진다(실사용 보고: 165초 구간인데 GPU·디스크만 `quantilesExact=false`). 떠낸 실측 표본 수가 누산기의 `Count` 와 다르면 정확하다고 주장하지 않고 스케치로 돌아간다
+- **시각으로 자른 구간**(`get_interval_stats`·`compare_intervals`)은 누산기 없이 링의 실측 표본을 그 자리에서 센다(`Core/Metrics/WindowStatistics`). 정의는 리셋 구간과 같다(최근접 순위, 표본 표준편차, 유지값 제외). 링 밖으로 나간 앞부분은 근사로 메우지 않고 `truncated` 로 알린다 — 사후에 구간끼리 비교하려는 기능이라 구간마다 기준이 다르면 비교가 무너진다
   - **고정 칸 히스토그램을 쓰지 않는 이유**: 바이트 계열을 1 B~16 TB 64칸으로 나누면 칸 하나가 ×1.62 배라 14.6~16 GB 가 12.35 GB 로 답해졌고, 전력을 0~1000 W 64칸으로 나누면 칸 폭 15.9 W 라 유휴 22.5 W 의 p95 가 15.87 W(최소보다 작다)로 나왔다. 서로 다른 지표가 같은 칸 경계에 떨어져 같은 숫자(1097631034)를 내기도 했다. 단위마다 범위를 맞추는 한 되풀이되는 문제다. 로그 스케치는 값의 크기와 무관하게 상대 오차를 보장하고, 메모리는 실제로 관측된 값의 폭에만 비례한다
 - **포화 비율**: 백분율 지표는 문턱(기본 90%) 이상이었던 표본의 비율을 함께 낸다. 버스트형 부하에서는 평균이 포화를 가린다 — 평균 62% 인데 100% 구간이 반복되는 경우를 이 숫자가 드러낸다
 - **리셋 의미론**: 통계만 초기화하고 차트 히스토리는 유지, 리셋 시점에 수직 마커선. 전역 리셋은 **접힌 카드와 표시하지 않는 지표까지 전부** 초기화한다
@@ -1599,7 +1611,7 @@ WPF 의 `Microsoft.Win32.SaveFileDialog` 는 속을 셸의 `IFileSaveDialog` 로
 - 기동 시 랜덤 토큰 → `%LOCALAPPDATA%\ChronoLoad\mcp.token`(ACL: 현재 사용자만). 종료 시 삭제
 - 토큰 비교는 **상수 시간**(`FixedTimeEquals`). 문자열 `==` 는 첫 불일치에서 빠져나와 응답 시간으로 한 글자씩 새어 나갈 여지를 남긴다
 - `Origin` 헤더 검증(DNS 리바인딩 방어). 헤더가 없는 비브라우저 클라이언트는 통과
-- 읽기 전용 원칙. 상태 변경 툴은 `reset_stats` 하나뿐. **프로세스 종료·우선순위 변경 툴은 제공하지 않는다**
+- 읽기 전용 원칙. 상태를 바꾸는 툴은 `reset_stats`·`mark`·`watch_process`·`unwatch_process` 뿐이고 **바꾸는 것은 전부 MCP 쪽 메모리**(기준점·이름표·기록 목록)다. 시스템도, 화면 통계도 건드리지 않는다. **프로세스 종료·우선순위 변경 툴은 제공하지 않는다**
 
 > **토큰 파일에 PID 를 함께 적고 읽을 때 확인한다.** 앱이 정상 종료하면 파일을 지우지만
 > 강제 종료되거나 죽으면 남는다. 그대로 두면 브리지가 없는 앱에 계속 연결을 시도해,
@@ -1622,6 +1634,13 @@ WPF 의 `Microsoft.Win32.SaveFileDialog` 는 속을 셸의 `IFileSaveDialog` 로
 | `reset_stats` | `confirm: true`, `includePrevious?`, `metric?`, `deviceKey?` | 리셋 후 **직전 구간 통계를 반환**. 표본이 없던 지표는 빼고 그 수를 `omittedEmpty` 로. 거르는 인자는 **돌려받을 범위만** 좁힌다 — 리셋은 늘 전 지표에 걸린다. 지표마다 기준점이 다르면 구간끼리 비교할 수 없다 |
 | `list_processes` | `sortBy`(cpu\|memory\|gpu\|gpuMemory\|diskIo), `adapterKey?`, `limit`(≤50), `nameFilter?` | PID, 이름, CPU%, 워킹셋, 어댑터별 GPU%·메모리, 디스크 I/O. `gpu`·`gpuMemory`·`diskIo` 정렬은 **그 값이 0 인 프로세스를 빼고** 수를 `excludedIdle` 로 — 동률 0 이 PID 순으로 뒤따라 붙으면 쓰지 않는 프로세스가 순위에 끼어 보인다. 동률은 CPU → 워킹셋 순. 어댑터 키는 대소문자를 가리지 않는다 |
 | `get_process_detail` | `pid` | 위 + 경로, 명령줄(권한 허용 시), 부모 PID, 어댑터별·엔진별 GPU 사용률 |
+| `watch_process` | `pid`, `durationSeconds?`(기본 600, ≤3600) | 1초 기록 시작(§5.6). 최대 8개. 이미 감시 중이면 기한만 늘린다 |
+| `get_process_history` | `pid`, `windowSeconds?`(≤900), `maxPoints?`(≤500) | `startAt` + `offsetsMs`, `cpuPercent`·`workingSetBytes`, 어댑터·계열별 `gpu[]`. 넘치면 시간 등분해 칸마다 `avg`·`max` |
+| `unwatch_process` | `pid` | 감시를 풀고 기록을 버린다 |
+| `mark` | `label`, `note?` | 지금 시각에 이름을 붙인다. 같은 이름이면 옮기고 `movedFrom` 으로 알린다. 앱 메모리에만 있다(최대 200개) |
+| `list_marks` | — | 마커 목록, 링 버퍼 안인지(`inBuffer`) |
+| `get_interval_stats` | `from`, `to?`(생략 시 지금), `metric?`, `deviceKey?`, `saturationThreshold?` | 두 시점(마커 이름 또는 ISO-8601) 사이의 정확한 통계(§7.3). 리셋 구간과 무관하다. 표본이 없는 지표는 빼고 `omittedEmpty` |
+| `compare_intervals` | `marks[]`, `untilNow?`, `metric?`, `deviceKey?`, `saturationThreshold?` | 마커를 시각순으로 이은 구간들을 지표별 한 행에. 칸마다 `n`·`avg`·`p95`·`max`, 백분율은 `saturatedFraction` |
 | `describe_capabilities` | — | 어댑터별 센서 계층(NVML/ADLX/IGCL/LevelZero/PDH), 디스크·인터페이스 목록, 샘플 주기, 버퍼 용량, **`devicesRevision`**, GPU·NPU 마다 `aiSignals`. 계층 표의 키는 **장치 키**다 — 이름으로 잡으면 같은 모델 두 장이 겹친다. 절전이라 벤더 경로를 아직 열지 않은 어댑터는 `PDH (standby)` 로 적는다(§6.3). 이유가 없으면 같은 장치가 한 번은 PDH, 깨어난 뒤에는 IGCL 로 보여 두 툴이 서로 다른 말을 하는 것처럼 읽힌다 |
 
 ### 10.2-1 브리지의 실패 설계
@@ -1643,6 +1662,7 @@ WPF 의 `Microsoft.Win32.SaveFileDialog` 는 속을 셸의 `IFileSaveDialog` 로
 ### 10.4 리소스 · 응답 지침
 - 리소스 `chronoload://snapshot`, `chronoload://stats`
 - 프롬프트 `analyze_gpu_workload` — 병목(연산 / VRAM / 디스크 I/O / 네트워크) 진단 템플릿
+- **직렬화는 SDK 기본값을 두 군데 바꾼다**(`McpHost.ToolJson`). SDK 기본은 `null` 필드를 **통째로 생략**해 "값이 없으면 null" 이 전선 위에서 사라졌고(에이전트는 null 인지 필드가 없는지 가를 수 없다), 비ASCII 를 전부 `\uXXXX` 로 바꿔 한글 설명 문장이 글자당 6바이트로 부풀었다. 둘 다 툴 메서드를 직접 부르는 테스트로는 보이지 않아, 서버를 세워 JSON-RPC 로 부르는 테스트(`McpWireTests`)를 둔다
 - 바이트는 `{"bytes": 8589934592, "text": "8.00 GB"}` 형태로 둘 다. 계산은 `bytes` 로 한다 — `text` 는 사람이 읽는 줄이고 반올림이 들어 있다
 - 시각은 ISO-8601(로컬 오프셋). 모든 응답에 `sampledAt`, `stale` 포함
 - 기본 요약형, `verbose: true`로 확장
@@ -2102,16 +2122,14 @@ M7 안에서 처리하기로 **이미 정해진** 항목들이다. §17 「구�
 
 ### 15.4 요청 — 실사용 피드백에서 나온 기능
 
-2026-09-27 음성 인식 서비스(`RSttStreamerOV`) 부하 분석에 MCP 를 붙여 본 평가에서 나왔다.
-같은 평가의 버그 여덟 건과 엔진 계열 시계열·포화 비율은 1.35 에서 반영했고, 남은 것이 이것이다.
+2026-09-27 음성 인식 서비스(`RSttStreamerOV`) 부하 분석에 MCP 를 붙여 본 평가 두 번에서 나왔다.
+엔진 계열 시계열·포화 비율은 1.35, 전력 한도·스로틀은 1.37, PCIe·구간 마커·프로세스 시계열은 1.38 에서
+반영했고, 남은 것이 이것이다.
 **아직 설계하지 않았다** — 설계가 정해지면 §15.1 로 올리거나 여기서 지운다.
 
 | 요청 | 분석 가치 | 메모 |
 |---|---|---|
-| 구간 마커 `mark(label)` + `get_stats(from, to)` / `compare_segments` | 높음 | 리셋을 순서대로 걸지 않고도 사후에 여러 구간을 표 하나로 비교. 링(15분) 안이면 §7.4 시간 축과 §7.3 정확 경로로 바로 된다 |
-| 프로세스 시계열 `watch_process(pid)` | 높음 | 특정 PID 의 GPU·엔진·CPU·메모리를 주기적으로 기록. 지금 프로세스 수집은 2초 Lazy 티어라 250ms 로 올리면 비용(§12)을 다시 재야 한다 |
 | 구간 히스토그램 | 중간 | 포화 비율은 1.35 에서 넣었다. 분포 모양 전체가 필요하면 스케치(§7.3)에서 뽑을 수 있다 |
-| PCIe 송수신 처리량 | 중간 | NVML `nvmlDeviceGetPcieThroughput`(송·수신 KB/s). 호스트↔VRAM 전송이 병목인지 가른다 — 지금은 `GpuCopy` 엔진 사용률로 간접적으로만 보인다. 전력 한도·클럭 제한 사유는 1.37 에서 넣었다(§5.4) |
 | 프로세스 트리·이름 단위 합산 | 낮음 | `dotnet` → `RSttStreamerOV.exe` 같은 구조. 부모 PID 는 이미 수집한다 |
 | 프로세스 표 CSV 내보내기 | 낮음 | |
 
