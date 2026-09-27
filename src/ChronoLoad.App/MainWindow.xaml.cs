@@ -52,6 +52,7 @@ public partial class MainWindow : Window
 
     private readonly ScrubState _scrub = new();
     private readonly int? _initialScrub;
+    private readonly string? _scrubFocus;
     private readonly AppSettings _settings = AppSettings.Load();
     private readonly DispatcherTimer _saveSettle = new() { Interval = TimeSpan.FromSeconds(2) };
     private readonly bool _startCollapsed;
@@ -61,9 +62,13 @@ public partial class MainWindow : Window
     /// 시간 폭의 시작값. 렌더 테스트가 표준이 아닌 폭을 잡아 보기 위한 자리다 —
     /// 실제 실행에서는 늘 <see cref="TimeWidthLadder.Standard"/>로 시작한다(저장하지 않는다).
     /// </param>
+    /// <param name="scrubFocus">
+    /// 렌더 테스트에서 전체 패널을 띄울 카드 키의 앞부분(예 <c>gpu</c>). 없으면 펼쳐진 첫 카드다.
+    /// </param>
     public MainWindow(MetricRegistry registry, SampleEngine? engine, bool startCollapsed = false,
-        int? initialScrub = null, TimeSpan? initialWidth = null)
+        int? initialScrub = null, TimeSpan? initialWidth = null, string? scrubFocus = null)
     {
+        _scrubFocus = scrubFocus;
         _registry = registry;
         _engine = engine;
         _initialScrub = initialScrub;
@@ -147,7 +152,10 @@ public partial class MainWindow : Window
         // 렌더 테스트에서 스크럽 상태를 재현하기 위한 진입점.
         if (_initialScrub is { } index && _cards.Count > 0)
         {
-            var focus = _cards.FirstOrDefault(c => !c.Model.Collapsed) ?? _cards[0];
+            var focus = (_scrubFocus is { } prefix
+                            ? _cards.FirstOrDefault(c => c.Model.Key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                            : null)
+                        ?? _cards.FirstOrDefault(c => !c.Model.Collapsed) ?? _cards[0];
             _scrub.TogglePin(focus.Model.Key, index, focus.WindowPoints);
         }
     }

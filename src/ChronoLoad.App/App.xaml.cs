@@ -27,6 +27,8 @@ public partial class App : Application
         if (renderTestIndex >= 0 && renderTestIndex + 1 < e.Args.Length)
         {
             int scrubIndex = Array.FindIndex(e.Args, a => a == "--scrub");
+            int focusIndex = Array.FindIndex(e.Args, a => a == "--scrub-focus");
+            string? scrubFocus = focusIndex >= 0 && focusIndex + 1 < e.Args.Length ? e.Args[focusIndex + 1] : null;
             int widthIndex = Array.FindIndex(e.Args, a => a == "--width");
             int heightIndex = Array.FindIndex(e.Args, a => a == "--height");
             double? windowHeight = heightIndex >= 0 && heightIndex + 1 < e.Args.Length
@@ -40,7 +42,7 @@ public partial class App : Application
                 e.Args.Contains("--collapsed"), scrub, e.Args.Contains("--hotplug"),
                 e.Args.Contains("--about"), e.Args.Contains("--scrub-drift"),
                 e.Args.Contains("--gap"), width, e.Args.Contains("--settings"),
-                e.Args.Contains("--snapshot"), windowHeight);
+                e.Args.Contains("--snapshot"), windowHeight, scrubFocus);
             return;
         }
 
@@ -151,7 +153,7 @@ public partial class App : Application
     private void RunRenderTest(string outputPath, bool light, bool collapsed, int? scrubIndex = null,
                                bool hotPlug = false, bool about = false, bool scrubDrift = false,
                                bool gap = false, TimeSpan? width = null, bool settings = false,
-                               bool snapshot = false, double? windowHeight = null)
+                               bool snapshot = false, double? windowHeight = null, string? scrubFocus = null)
     {
         // 렌더 테스트는 합성 장치를 쓴다. 실제 설정 폴더를 그대로 쓰면 사용자의 창 위치를
         // 읽어 와 그림이 달라지고, 끝낼 때 gpu:demo 같은 가짜 장치 키를 사용자 파일에 남긴다.
@@ -172,7 +174,7 @@ public partial class App : Application
         // 엔진 없이 검사하면 실제와 다른 경로를 보게 된다. 루프는 돌리지 않고 틱만 손으로 민다.
         var engine = hotPlug || scrubDrift ? new SampleEngine(registry) : null;
 
-        var window = new MainWindow(registry, engine, collapsed, scrubIndex, width)
+        var window = new MainWindow(registry, engine, collapsed, scrubIndex, width, scrubFocus)
         {
             Left = -10_000,
             Top = -10_000,
@@ -463,9 +465,10 @@ public partial class App : Application
                     ["discrete"] = "true",
                     ["computeOnly"] = "false",
                     ["dedicatedBytes"] = Vram.ToString("F0"),
+                    ["hardwareScheduling"] = "true",
                 },
             },
-            [MetricKind.GpuUtil, MetricKind.GpuCompute, MetricKind.GpuDedicated, MetricKind.GpuShared]);
+            [MetricKind.GpuUtil, MetricKind.Gpu3D, MetricKind.GpuDedicated, MetricKind.GpuShared]);
 
         var npu = registry.Register(
             new DeviceInfo("npu:demo", DeviceClass.Gpu, "AI Boost NPU",
@@ -516,7 +519,8 @@ public partial class App : Application
             npuValue = Math.Clamp(npuValue + random.NextDouble() * 10 - 5 + Math.Sin(phase * 1.3) * 4, 0, 85);
 
             frame[gpu.SlotOf(MetricKind.GpuUtil)] = (float)gpuValue;
-            frame[gpu.SlotOf(MetricKind.GpuCompute)] = (float)(gpuValue * 0.78);
+            // HAGS 가 켜진 NVIDIA 에서 CUDA 는 3D 로 잡히므로 사용률을 거의 그대로 따라간다.
+            frame[gpu.SlotOf(MetricKind.Gpu3D)] = (float)(gpuValue * 0.92);
             frame[gpu.SlotOf(MetricKind.GpuDedicated)] = (float)dedicated;
             frame[gpu.SlotOf(MetricKind.GpuShared)] = (float)shared;
             frame[npu.SlotOf(MetricKind.GpuUtil)] = (float)npuValue;

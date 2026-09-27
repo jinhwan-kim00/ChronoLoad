@@ -134,4 +134,55 @@ public class AiSignalsTests
         Assert.All(signals.Primary.Concat(signals.Supporting),
             name => Assert.True(bare.SlotOf(Enum.Parse<MetricKind>(name)) >= 0, name));
     }
+
+    /// <summary>
+    /// GPU 카드의 보조선은 aiSignals 와 같은 규칙으로 고른다. 예전에는 늘 Compute 였고,
+    /// HAGS 가 켜진 NVIDIA 에서는 추론 중에도 0 에 붙어 있었다.
+    /// </summary>
+    [Theory]
+    [InlineData("NVIDIA", "true", false, MetricKind.Gpu3D)]
+    [InlineData("NVIDIA", "unknown", false, MetricKind.Gpu3D)]
+    [InlineData("NVIDIA", "false", false, MetricKind.GpuCompute)]
+    [InlineData("Intel", "true", false, MetricKind.GpuRenderCompute)]
+    [InlineData("AMD", "true", false, MetricKind.GpuCompute)]
+    [InlineData("Intel", "unknown", true, MetricKind.GpuCompute)]     // NPU
+    public void Chart_secondary_follows_the_ai_signal(string vendor, string hags, bool npu, MetricKind expected)
+    {
+        var info = new DeviceInfo("gpu:x", DeviceClass.Gpu, "GPU", "GPU", npu ? IconKind.Npu : IconKind.GpuGeneric, vendor)
+        {
+            Extra = new Dictionary<string, string> { ["hardwareScheduling"] = hags },
+        };
+
+        Assert.Equal(expected, GpuAiSignals.ChartSecondary(info, _ => true));
+    }
+
+    [Fact]
+    public void Chart_secondary_skips_what_the_adapter_does_not_have()
+    {
+        var info = new DeviceInfo("gpu:x", DeviceClass.Gpu, "Arc", "Arc", IconKind.GpuIntel, "Intel");
+
+        // PDH 만 붙은 Intel — 하드웨어 카운터가 없으면 다음 후보인 Compute 를 그린다.
+        Assert.Equal(MetricKind.GpuCompute,
+            GpuAiSignals.ChartSecondary(info, k => k is MetricKind.GpuUtil or MetricKind.GpuCompute));
+
+        // 사용률 말고는 아무것도 없으면 보조선을 그리지 않는다.
+        Assert.Null(GpuAiSignals.ChartSecondary(info, k => k == MetricKind.GpuUtil));
+    }
+
+    [Fact]
+    public void Mcp_primary_and_the_chart_use_the_same_rule()
+    {
+        var registry = new MetricRegistry(seriesCapacity: 16);
+        var intel = registry.Register(
+            new DeviceInfo("gpu:b580", DeviceClass.Gpu, "B580", "B580", IconKind.GpuIntel, "Intel")
+            {
+                Extra = new Dictionary<string, string> { ["discrete"] = "true" },
+            },
+            [MetricKind.GpuUtil, MetricKind.GpuCompute, MetricKind.Gpu3D, MetricKind.GpuRenderCompute]);
+
+        var signals = AiSignals.For(intel);
+        var secondary = GpuAiSignals.ChartSecondary(intel.Info, k => intel.SlotOf(k) >= 0);
+
+        Assert.Equal(secondary.ToString(), signals.Primary.First(p => p != nameof(MetricKind.GpuUtil)));
+    }
 }

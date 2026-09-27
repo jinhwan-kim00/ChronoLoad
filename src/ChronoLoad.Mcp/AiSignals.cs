@@ -42,6 +42,9 @@ public sealed record AiSignals(
         string[] Present(params MetricKind[] kinds) =>
             kinds.Where(k => device.SlotOf(k) >= 0).Select(k => k.ToString()).ToArray();
 
+        // 어느 지표가 AI 연산을 싣는지는 Core 의 규칙 하나로 정한다 — GPU 카드의 보조선도 같은 규칙을 쓴다.
+        string[] primary = Present(GpuAiSignals.PrimaryCandidates(info));
+
         // 전력 한도에 붙어 클럭이 깎이는 것이 AI 부하의 흔한 천장이다. 실측: RTX 5080 CUDA 부하 360 W / 한도 360 W.
         string[] Limits() => Present(MetricKind.GpuThrottlePower, MetricKind.GpuThrottleThermal,
             MetricKind.GpuThrottleOther, MetricKind.GpuPower, MetricKind.GpuPowerLimit, MetricKind.GpuClock);
@@ -51,14 +54,14 @@ public sealed record AiSignals(
             : Present(MetricKind.GpuShared, MetricKind.GpuDedicated);
 
         if (info.Icon == IconKind.Npu)
-            return new AiSignals(Present(MetricKind.GpuCompute, MetricKind.GpuUtil), memory,
+            return new AiSignals(primary, memory,
                 "NPU 는 Neural 엔진 하나뿐이다. GpuCompute 가 곧 그 엔진의 사용률이다.");
 
         switch (info.Vendor)
         {
             case "NVIDIA" when hags != false:
                 return new AiSignals(
-                    Present(MetricKind.GpuUtil, MetricKind.Gpu3D),
+                    primary,
                     [.. Present(MetricKind.GpuMemBusy, MetricKind.GpuCopy, MetricKind.GpuPcieRx, MetricKind.GpuPcieTx),
                      .. memory, .. Limits()],
                     (hags == true ? "하드웨어 가속 GPU 예약(HAGS)이 켜져 있어" : "HAGS 상태를 모르지만 Windows 11 기본값이 켜짐이라") +
@@ -69,7 +72,7 @@ public sealed record AiSignals(
 
             case "NVIDIA":
                 return new AiSignals(
-                    Present(MetricKind.GpuUtil, MetricKind.GpuCompute),
+                    primary,
                     [.. Present(MetricKind.GpuMemBusy, MetricKind.GpuCopy, MetricKind.GpuPcieRx, MetricKind.GpuPcieTx,
                         MetricKind.Gpu3D), .. memory, .. Limits()],
                     "HAGS 가 꺼져 있어 CUDA 가 Compute_0·Compute_1·Cuda 엔진으로 따로 잡힌다(GpuCompute)." +
@@ -77,7 +80,7 @@ public sealed record AiSignals(
 
             case "Intel":
                 return new AiSignals(
-                    Present(MetricKind.GpuRenderCompute, MetricKind.GpuCompute, MetricKind.Gpu3D, MetricKind.GpuUtil),
+                    primary,
                     [.. Present(MetricKind.GpuCopy), .. memory, .. Limits()],
                     (discrete
                         ? "Arc 외장은 OpenVINO·oneAPI 연산이 Compute(CCS) 엔진에 실린다. 커널에 따라 3D(렌더) 엔진을 쓰기도 한다." +
@@ -90,12 +93,12 @@ public sealed record AiSignals(
 
             case "AMD":
                 return new AiSignals(
-                    Present(MetricKind.GpuCompute, MetricKind.Gpu3D, MetricKind.GpuUtil),
+                    primary,
                     [.. Present(MetricKind.GpuCopy), .. memory],
                     "Compute_N·High Priority Compute 엔진이 GpuCompute 에 들어온다. DirectML 은 3D 큐를 쓰기도 한다.");
 
             default:
-                return new AiSignals(Present(MetricKind.GpuUtil, MetricKind.GpuCompute, MetricKind.Gpu3D), memory,
+                return new AiSignals(primary, memory,
                     "제조사를 모른다. 사용률과 엔진 계열을 함께 본다.");
         }
     }

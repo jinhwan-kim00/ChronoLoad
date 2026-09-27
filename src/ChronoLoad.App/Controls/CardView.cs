@@ -564,9 +564,10 @@ public sealed class CardView : Border
             });
         }
 
-        foreach (var (label, value) in Model.OverlayRows(index.Value, isFocus))
+        foreach (var (label, value, mark) in Model.OverlayRows(index.Value, isFocus))
         {
             var row = new StackPanel { Orientation = Orientation.Horizontal };
+            if (mark != LegendMark.None) row.Children.Add(LegendSwatch(mark, palette));
             if (label.Length > 0)
                 row.Children.Add(new TextBlock
                 {
@@ -592,6 +593,76 @@ public sealed class CardView : Border
 
         _overlay.Visibility = Visibility.Visible;
         PositionOverlay(index.Value);
+    }
+
+    /// <summary>
+    /// 범례 표식 — 차트가 그 계열을 그리는 것과 같은 선·채움·빗금이다.
+    /// </summary>
+    /// <remarks>
+    /// 모양은 <see cref="ChartSurface"/> 의 조합 차트와 맞춘다: 사용률 2px 불투명 실선, 보조선 1.2px 파선,
+    /// 전용 메모리 20% 채움 + 1px 윗선, 공유 메모리 빗금(외장은 경고색), 용량 1.3px 파선.
+    /// 보조선만 차트보다 조금 진하게 긋는다 — 차트의 0x70 을 16px 견본에 그대로 쓰면 배경에 묻힌다.
+    /// </remarks>
+    private FrameworkElement LegendSwatch(LegendMark mark, ThemePalette palette)
+    {
+        const double W = 16, H = 9;
+        var accent = Model.Accent(palette);
+        var warn = palette.Warn;
+        var canvas = new System.Windows.Controls.Canvas
+        {
+            Width = W,
+            Height = H,
+            Margin = new Thickness(0, 1, 5, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+            ClipToBounds = true,
+        };
+
+        System.Windows.Media.Color A(System.Windows.Media.Color c, byte alpha) =>
+            System.Windows.Media.Color.FromArgb(alpha, c.R, c.G, c.B);
+
+        System.Windows.Shapes.Line Stroke(double y, System.Windows.Media.Color c, double thickness, bool dashed) => new()
+        {
+            X1 = 0, X2 = W, Y1 = y, Y2 = y,
+            Stroke = Frozen(c),
+            StrokeThickness = thickness,
+            StrokeDashArray = dashed ? [3, 2] : null,
+        };
+
+        switch (mark)
+        {
+            case LegendMark.Line:
+                canvas.Children.Add(Stroke(H / 2, accent, 2, dashed: false));
+                break;
+
+            case LegendMark.Dashed:
+                canvas.Children.Add(Stroke(H / 2, A(accent, 0xB0), 1.2, dashed: true));
+                break;
+
+            case LegendMark.Area:
+                canvas.Children.Add(new System.Windows.Shapes.Rectangle
+                {
+                    Width = W, Height = H - 3, Fill = Frozen(A(accent, 0x33)),
+                });
+                System.Windows.Controls.Canvas.SetTop(canvas.Children[^1], 3);
+                canvas.Children.Add(Stroke(3, A(accent, 0x77), 1, dashed: false));
+                break;
+
+            case LegendMark.Hatch:
+                var hatch = Model.IsDiscrete ? warn : accent;
+                canvas.Children.Add(new System.Windows.Shapes.Rectangle
+                {
+                    Width = W, Height = H - 3, Fill = ChartSurface.Hatch(hatch, 0x99),
+                });
+                System.Windows.Controls.Canvas.SetTop(canvas.Children[^1], 3);
+                canvas.Children.Add(Stroke(3, A(hatch, 0x88), 1, dashed: false));
+                break;
+
+            case LegendMark.Capacity:
+                canvas.Children.Add(Stroke(H / 2, _chart.IsSpilling ? warn : A(accent, 0x99), 1.3, dashed: true));
+                break;
+        }
+
+        return canvas;
     }
 
     /// <summary>

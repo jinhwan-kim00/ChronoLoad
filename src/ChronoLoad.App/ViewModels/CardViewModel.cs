@@ -14,6 +14,25 @@ namespace ChronoLoad.App.ViewModels;
 /// <param name="Over">용량을 넘겼는가. 미터의 색이 이 값을 따른다.</param>
 public readonly record struct GpuMemorySummary(string Text, double Ratio, bool Over);
 
+/// <summary>오버레이 행 앞에 그리는 범례 표식. 차트의 그 계열과 같은 모양이다.</summary>
+public enum LegendMark
+{
+    None,
+    /// <summary>굵은 실선 — 주 계열(사용률).</summary>
+    Line,
+    /// <summary>얇은 흐린 파선 — 보조 계열.</summary>
+    Dashed,
+    /// <summary>옅게 채운 영역과 윗선 — 전용 메모리.</summary>
+    Area,
+    /// <summary>빗금 띠 — 공유 메모리(전용 위에 적층).</summary>
+    Hatch,
+    /// <summary>가로 파선 — 전용 VRAM 용량.</summary>
+    Capacity,
+}
+
+/// <summary>오버레이 한 줄. <paramref name="Mark"/> 가 None 이 아니면 줄 앞에 그 계열의 선 견본을 그린다.</summary>
+public readonly record struct OverlayRow(string Label, string Value, LegendMark Mark = LegendMark.None);
+
 /// <summary>카드 하나가 무엇을 어떻게 그릴지. 값은 갖지 않고 <see cref="MetricRegistry"/>를 그때그때 읽는다.</summary>
 public sealed class CardViewModel
 {
@@ -23,6 +42,9 @@ public sealed class CardViewModel
 
     public MetricSeries? Secondary { get; init; }
     public int SecondarySlot { get; init; } = -1;
+
+    /// <summary>GPU 보조선의 이름(<c>3D</c>·<c>렌더+컴퓨트</c>·<c>Compute</c>). 오버레이 범례에 적는다.</summary>
+    public string? SecondaryLabel { get; init; }
 
     /// <summary>GPU 조합 차트의 전용·공유 메모리.</summary>
     public MetricSeries? MemoryDedicated { get; init; }
@@ -177,9 +199,15 @@ public sealed class CardViewModel
     /// <summary>
     /// 오버레이 한 줄. 포커스 카드는 전체 패널(첫 줄이 전체 장치명), 나머지는 요약 칩이다.
     /// </summary>
-    public IReadOnlyList<(string Label, string Value)> OverlayRows(int index, bool full)
+    /// <remarks>
+    /// <b>GPU 카드의 전체 패널은 범례를 겸한다.</b> 조합 차트에는 선이 다섯 가지(사용률·보조선·전용·공유·용량)
+    /// 있는데 화면 어디에도 무엇인지 적혀 있지 않아, "채워지지 않은 얇은 선이 뭐냐"는 질문이 나왔다.
+    /// 범례를 따로 두면 카드의 텍스트 예산(§9.3)을 먹으므로, 값을 읽으러 올린 손이 닿는 자리에 선 견본을 붙인다.
+    /// 요약 칩에는 붙이지 않는다 — 여러 카드에 동시에 뜨는 작은 칩이 전부 범례를 달면 화면이 시끄럽다.
+    /// </remarks>
+    public IReadOnlyList<OverlayRow> OverlayRows(int index, bool full)
     {
-        var rows = new List<(string, string)>();
+        var rows = new List<OverlayRow>();
         string Fmt(MetricSeries? s, MetricUnit unit, double factor = 1)
         {
             if (s is null) return "—";
@@ -187,7 +215,12 @@ public sealed class CardViewModel
             return float.IsNaN(v) ? "—" : MetricFormatter.Format(unit, v * factor).ToString();
         }
 
-        rows.Add((string.Empty, Fmt(Primary, DisplayUnit, DisplayFactor)));
+        bool gpuCombo = full && MemoryDedicated is not null;
+
+        // GPU 조합 차트에서는 첫 줄도 이름과 표식을 단다. 다른 카드는 계열이 하나라 이름이 필요 없다.
+        rows.Add(gpuCombo
+            ? new OverlayRow("사용률", Fmt(Primary, DisplayUnit, DisplayFactor), LegendMark.Line)
+            : new OverlayRow(string.Empty, Fmt(Primary, DisplayUnit, DisplayFactor)));
 
         if (!full)
         {
@@ -195,31 +228,37 @@ public sealed class CardViewModel
             // 디스크 "읽기 / 쓰기", GPU "사용률, 전용+공유"). 한쪽만 내면 미러 차트가
             // "읽기만 있고 쓰기는 없는" 것처럼 읽히고, GPU 는 사용률만으로 메모리를 알 수 없다.
             if (Secondary is not null && SecondaryIsOpposite)
-                rows.Add(("↑", Fmt(Secondary, DisplayUnit, DisplayFactor)));
+                rows.Add(new OverlayRow("↑", Fmt(Secondary, DisplayUnit, DisplayFactor)));
             else if (MemoryHeadline(index) is { } memory)
-                rows.Add((string.Empty, memory.Text));
+                rows.Add(new OverlayRow(string.Empty, memory.Text));
 
             return rows;
         }
 
         // 왜 값이 비는지를 먼저 말한다. 아래의 "—" 들이 고장으로 읽히면 안 된다.
-        if (IsStandby) rows.Add(("상태", "저전력 대기 — 깨우지 않음"));
+        if (IsStandby) rows.Add(new OverlayRow("상태", "저전력 대기 — 깨우지 않음"));
+
+        // 보조선은 사용률과 같은 축(0~100%)이라 바로 아래에 둔다.
+        if (Secondary is not null && SecondaryIsOpposite)
+            rows.Add(new OverlayRow("↑", Fmt(Secondary, DisplayUnit, DisplayFactor)));
+        else if (Secondary is not null && gpuCombo)
+            rows.Add(new OverlayRow(SecondaryLabel ?? "보조", Fmt(Secondary, MetricUnit.Percent), LegendMark.Dashed));
 
         if (MemoryDedicated is not null)
         {
-            rows.Add(("전용", Fmt(MemoryDedicated, MetricUnit.Bytes)));
-            rows.Add(("공유", Fmt(MemoryShared, MetricUnit.Bytes)));
+            rows.Add(new OverlayRow("전용", Fmt(MemoryDedicated, MetricUnit.Bytes), LegendMark.Area));
+            rows.Add(new OverlayRow("공유", Fmt(MemoryShared, MetricUnit.Bytes), LegendMark.Hatch));
+
+            // 용량선은 외장에만 그린다(§8.3). 그린 선에만 범례를 단다.
+            if (IsDiscrete && DedicatedCapacity > 0)
+                rows.Add(new OverlayRow("용량", MetricFormatter.Format(MetricUnit.Bytes, DedicatedCapacity).ToString(),
+                    LegendMark.Capacity));
         }
 
-        if (Secondary is not null && SecondaryIsOpposite)
-            rows.Add(("↑", Fmt(Secondary, DisplayUnit, DisplayFactor)));
-        else if (Secondary is not null && MemoryDedicated is not null)
-            rows.Add(("Compute", Fmt(Secondary, MetricUnit.Percent)));
-
         // 온도·전력·클럭은 벤더 네이티브 경로가 붙은 어댑터에만 값이 있다(설계서 §5.4 계층 B).
-        if (Temperature is not null) rows.Add(("온도", Fmt(Temperature, MetricUnit.Celsius)));
-        if (Power is not null) rows.Add(("전력", Fmt(Power, MetricUnit.Watt)));
-        if (Clock is not null) rows.Add(("클럭", Fmt(Clock, MetricUnit.Megahertz)));
+        if (Temperature is not null) rows.Add(new OverlayRow("온도", Fmt(Temperature, MetricUnit.Celsius)));
+        if (Power is not null) rows.Add(new OverlayRow("전력", Fmt(Power, MetricUnit.Watt)));
+        if (Clock is not null) rows.Add(new OverlayRow("클럭", Fmt(Clock, MetricUnit.Megahertz)));
 
         return rows;
     }

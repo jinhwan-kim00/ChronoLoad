@@ -126,7 +126,10 @@ public static class CardFactory
         double sharedCapacity = double.TryParse(device.Info.Extra.GetValueOrDefault("sharedBytes"), out var shared)
             ? shared : 0;
 
-        int computeSlot = device.SlotOf(MetricKind.GpuCompute);
+        // 보조선은 이 GPU 에서 AI 연산이 실리는 지표다(MCP aiSignals 와 같은 규칙, §8.3).
+        // 늘 Compute 를 그리면 HAGS 가 켜진 NVIDIA 에서는 추론 중에도 0 에 붙어 "연산 안 함"으로 읽힌다.
+        var secondaryKind = GpuAiSignals.ChartSecondary(device.Info, k => device.SlotOf(k) >= 0);
+        int secondarySlot = secondaryKind is { } sk ? device.SlotOf(sk) : -1;
         int dedicatedSlot = device.SlotOf(MetricKind.GpuDedicated);
         int sharedSlot = device.SlotOf(MetricKind.GpuShared);
         int tempSlot = device.SlotOf(MetricKind.GpuTemp);
@@ -141,8 +144,9 @@ public static class CardFactory
             Device = device,
             Primary = registry.Series(utilSlot)!,
             PrimarySlot = utilSlot,
-            Secondary = combo && computeSlot >= 0 ? registry.Series(computeSlot) : null,
-            SecondarySlot = combo ? computeSlot : -1,
+            Secondary = combo && secondarySlot >= 0 ? registry.Series(secondarySlot) : null,
+            SecondarySlot = combo ? secondarySlot : -1,
+            SecondaryLabel = secondaryKind is { } label ? GpuAiSignals.Label(label) : null,
             MemoryDedicated = combo ? registry.Series(dedicatedSlot) : null,
             MemoryShared = combo && sharedSlot >= 0 ? registry.Series(sharedSlot) : null,
             Temperature = tempSlot >= 0 ? registry.Series(tempSlot) : null,

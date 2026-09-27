@@ -637,7 +637,7 @@ public sealed class ChartSurface : FrameworkElement
     /// 대각 해치. 전용/공유 메모리를 <b>색만이 아니라 채움 패턴으로도</b> 구분해
     /// 색을 구별하기 어려운 사용자도 두 계열을 가를 수 있게 한다.
     /// </summary>
-    private static Brush Hatch(Color color, byte alpha)
+    internal static Brush Hatch(Color color, byte alpha)
     {
         var key = ((uint)(color.R << 16 | color.G << 8 | color.B), alpha);
         if (HatchCache.TryGetValue(key, out var cached)) return cached;

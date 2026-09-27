@@ -302,7 +302,9 @@ public sealed class SnapshotWindow : Window
         {
             DeviceClass.Network => (Find(MetricKind.NetRx), Find(MetricKind.NetTx), null, null, ""),
             DeviceClass.Disk => (Find(MetricKind.DiskRead), Find(MetricKind.DiskWrite), null, null, ""),
-            DeviceClass.Gpu => (Find(MetricKind.GpuUtil), Find(MetricKind.GpuCompute),
+            // 보조선은 메인 창의 GPU 카드와 같은 규칙 — 이 GPU 에서 AI 연산이 실리는 지표다(§8.3).
+            DeviceClass.Gpu => (Find(MetricKind.GpuUtil),
+                                GpuAiSignals.ChartSecondary(metrics[0].Device, k => Find(k) is not null) is { } k2 ? Find(k2) : null,
                                 Find(MetricKind.GpuDedicated), Find(MetricKind.GpuShared), "메모리"),
             _ => (Find(MetricKind.CpuTotal) ?? Find(MetricKind.MemUsed), Find(MetricKind.MemCommit),
                   null, null, ""),
@@ -609,7 +611,7 @@ public sealed class SnapshotWindow : Window
     {
         MetricKind.GpuDedicated => "전용",
         MetricKind.GpuShared => "공유",
-        MetricKind.GpuCompute => "Compute",
+        MetricKind.GpuCompute or MetricKind.Gpu3D or MetricKind.GpuRenderCompute => GpuAiSignals.Label(kind),
         MetricKind.NetRx => "수신",
         MetricKind.NetTx => "송신",
         MetricKind.DiskRead => "읽기",
