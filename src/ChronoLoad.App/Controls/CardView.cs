@@ -376,6 +376,9 @@ public sealed class CardView : Border
     /// <summary>차트 더블클릭 — 시간 폭을 표준으로 되돌린다(§9.4).</summary>
     public event Action<CardView>? TimeWidthReset;
 
+    /// <summary>렌더 검사용. 헤더의 큰 숫자.</summary>
+    internal string HeaderText => _value.Text;
+
     /// <summary>스크럽 인덱스의 범위. 차트가 실제로 그린 점 수다.</summary>
     public int WindowPoints => Math.Max(2, _chart.PointCount);
 

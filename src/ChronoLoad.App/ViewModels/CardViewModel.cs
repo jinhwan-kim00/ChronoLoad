@@ -204,8 +204,15 @@ public sealed class CardViewModel
     /// 표시 창 안의 인덱스로 값을 읽는다. 창은 항상 최근 <paramref name="window"/>개다.
     /// 창 크기에 기본값을 두지 않는다 — 차트와 다른 값으로 읽으면 선과 숫자가 다른 순간을 가리킨다.
     /// </summary>
+    /// <remarks>
+    /// 인덱스가 창 오른쪽 끝을 넘으면 마지막 점으로 붙잡는다. 맨 오른쪽 선은 "지금"을 가리키는 것이므로
+    /// 한 칸 넘친 것을 값 없음으로 읽을 이유가 없다 — 창 크기와 인덱스가 한 틱 어긋나기만 해도
+    /// 전 카드가 "—" 로 깜빡였다. 왼쪽으로 넘친 것은 화면에 없는 순간이라 그대로 값 없음이다.
+    /// </remarks>
     public static float SampleAt(MetricSeries series, int index, int window)
     {
+        int visible = Math.Min(window, series.Count);
+        if (visible > 0 && index >= visible) index = visible - 1;
         int absolute = series.AbsoluteIndexOf(index, window);
         return absolute < 0 ? float.NaN : series[absolute];
     }

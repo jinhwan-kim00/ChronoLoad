@@ -42,7 +42,7 @@ public partial class App : Application
                 e.Args.Contains("--collapsed"), scrub, e.Args.Contains("--hotplug"),
                 e.Args.Contains("--about"), e.Args.Contains("--scrub-drift"),
                 e.Args.Contains("--gap"), width, e.Args.Contains("--settings"),
-                e.Args.Contains("--snapshot"), windowHeight, scrubFocus);
+                e.Args.Contains("--snapshot"), windowHeight, scrubFocus, e.Args.Contains("--scrub-live-check"));
             return;
         }
 
@@ -153,7 +153,8 @@ public partial class App : Application
     private void RunRenderTest(string outputPath, bool light, bool collapsed, int? scrubIndex = null,
                                bool hotPlug = false, bool about = false, bool scrubDrift = false,
                                bool gap = false, TimeSpan? width = null, bool settings = false,
-                               bool snapshot = false, double? windowHeight = null, string? scrubFocus = null)
+                               bool snapshot = false, double? windowHeight = null, string? scrubFocus = null,
+                               bool scrubLiveCheck = false)
     {
         // 렌더 테스트는 합성 장치를 쓴다. 실제 설정 폴더를 그대로 쓰면 사용자의 창 위치를
         // 읽어 와 그림이 달라지고, 끝낼 때 gpu:demo 같은 가짜 장치 키를 사용자 파일에 남긴다.
@@ -189,7 +190,8 @@ public partial class App : Application
             window.Dispatcher.InvokeAsync(() => window.Height = dip,
                 System.Windows.Threading.DispatcherPriority.Loaded);
 
-        if (hotPlug) RunHotPlugScript(window, registry, engine!, outputPath);
+        if (scrubLiveCheck) CaptureAfter(600, window, outputPath, () => RunScrubLiveCheck(window, registry, outputPath));
+        else if (hotPlug) RunHotPlugScript(window, registry, engine!, outputPath);
         else if (scrubDrift) RunScrubDriftScript(window, registry, engine!, outputPath);
         else if (about) CaptureAfter(500, window, outputPath, () => CaptureAbout(window, outputPath));
         else if (settings) CaptureAfter(500, window, outputPath, () => CaptureSettings(window, outputPath));
@@ -230,6 +232,44 @@ public partial class App : Application
             () => Step(3, 1,
             () => Step(4, 1,
             () => Step(5, 40, Shutdown)))));
+    }
+
+    /// <summary>
+    /// 맨 오른쪽에 고정한 선이 틱마다 값을 잃지 않는지 센다. 결과는 <c>&lt;출력&gt;.txt</c> 에 적는다.
+    /// </summary>
+    /// <remarks>
+    /// 틱 간격을 230~270ms 로 흔든다. 실기기에서 틱은 정확히 250ms 가 아니라, 60초 창에 들어오는 점 수가
+    /// 매 틱 달라진다 — 그 흔들림에서만 드러나는 깜빡임이라 고정 간격의 합성 데이터로는 보이지 않았다.
+    /// 사람 손 없이 반복 확인하려면 이 경로가 필요하다.
+    /// </remarks>
+    private void RunScrubLiveCheck(MainWindow window, MetricRegistry registry, string outputPath)
+    {
+        window.PinLiveForTest();
+        window.CommitForTest();
+
+        var random = new Random(7);
+        long stamp = registry.LatestTimestamp ?? DateTime.UtcNow.Ticks;
+        var frame = new float[registry.SlotCount];
+        const int Ticks = 300;
+        int blankTicks = 0, blankCells = 0;
+
+        for (int i = 0; i < Ticks; i++)
+        {
+            for (int slot = 0; slot < frame.Length; slot++)
+                frame[slot] = registry.Series(slot)?.Latest ?? float.NaN;
+
+            stamp += TimeSpan.FromMilliseconds(230 + random.Next(41)).Ticks;
+            registry.PushFrame(frame, stamp);
+            window.CommitForTest();
+
+            int blanks = window.CardsForTest.Count(c => c.HeaderText == "—");
+            blankCells += blanks;
+            if (blanks > 0) blankTicks++;
+        }
+
+        File.WriteAllText(outputPath + ".txt",
+            $"ticks={Ticks} blankTicks={blankTicks} blankCells={blankCells} cards={window.CardsForTest.Count}");
+        Shutdown();
     }
 
     /// <summary>

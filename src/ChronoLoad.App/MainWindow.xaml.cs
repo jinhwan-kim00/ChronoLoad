@@ -508,14 +508,38 @@ public partial class MainWindow : Window
         // 복원했을 때 히스토리에는 구멍이 없다 (§6.3).
         if (_visibility is { ShouldRender: false }) return;
 
-        Dispatcher.InvokeAsync(() =>
-        {
-            // 새 샘플 하나가 들어왔으니 그래프가 한 칸 왼쪽으로 흐른다. 고정된 선도 같이 흘려
-            // 가리키던 순간을 놓치지 않게 한다 — 맨 오른쪽에 세운 선만 제자리에서 현재를 따라간다.
-            _scrub.Advance(_cards.Count > 0 ? _cards[0].WindowPoints : 240);
-            RefreshCards();
-        }, DispatcherPriority.Render);
+        Dispatcher.InvokeAsync(OnSampleCommitted, DispatcherPriority.Render);
     }
+
+    /// <summary>새 샘플 하나를 화면에 반영한다(UI 스레드).</summary>
+    /// <remarks>
+    /// <b>창 크기를 먼저 갱신하고 그다음에 스크럽선을 옮긴다.</b> 60초 창의 점 수는 틱 간격에 따라 매 틱
+    /// 바뀌는데(§9.4), 순서가 거꾸로면 맨 오른쪽 선이 <b>직전 틱의</b> 마지막 칸으로 잡힌다. 이번 틱에 창이
+    /// 한 점 줄면 그 칸은 범위 밖이라 전 카드의 헤더가 동시에 "—" 로 깜빡였다(실사용 보고).
+    /// </remarks>
+    private void OnSampleCommitted()
+    {
+        int points = WindowPointsForWidth();
+        foreach (var card in _cards) card.SetWindowPoints(points);
+
+        // 새 샘플 하나가 들어왔으니 그래프가 한 칸 왼쪽으로 흐른다. 고정된 선도 같이 흘려
+        // 가리키던 순간을 놓치지 않게 한다 — 맨 오른쪽에 세운 선만 제자리에서 현재를 따라간다.
+        _scrub.Advance(_cards.Count > 0 ? _cards[0].WindowPoints : points);
+        RefreshCards();
+    }
+
+    // ── 렌더 검사용 ──────────────────────────────────────────────
+    internal IReadOnlyList<CardView> CardsForTest => _cards;
+
+    /// <summary>맨 오른쪽(지금)에 선을 고정한다 — 커서를 차트 오른쪽 끝에 두고 누른 것과 같다.</summary>
+    internal void PinLiveForTest()
+    {
+        if (_cards.Count == 0) return;
+        _scrub.TogglePin(_cards[0].Model.Key, _cards[0].WindowPoints - 1, _cards[0].WindowPoints);
+    }
+
+    /// <summary>엔진 없이 커밋 하나를 반영한다. 실제 경로(<see cref="OnSampleCommitted"/>)와 같다.</summary>
+    internal void CommitForTest() => OnSampleCommitted();
 
     /// <summary>
     /// 스크럽 상태가 바뀌면 <b>전 카드</b>에 같은 인덱스를 밀어 넣는다.
