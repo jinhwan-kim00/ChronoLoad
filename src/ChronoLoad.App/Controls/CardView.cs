@@ -396,6 +396,8 @@ public sealed class CardView : Border
     public void SetWindowPoints(int points)
     {
         int clamped = Math.Max(2, points);
+        // 값을 읽는 쪽(헤더·오버레이)도 차트와 같은 창으로 읽어야 한다.
+        Model.WindowPoints = clamped;
         if (_chart.WindowPoints == clamped) return;
         _chart.WindowPoints = clamped;
         _spark.WindowPoints = clamped;

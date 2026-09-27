@@ -348,6 +348,18 @@ if (engine.DisabledProviders.Count > 0)
     {
         var gaps = new long[copied - 1];
         for (int i = 1; i < copied; i++) gaps[i - 1] = stamps[i] - stamps[i - 1];
+
+        // 틱이 주기보다 길어지면 PeriodicTimer 가 다음 틱을 곧바로 돌린다. 그 짧은 틱에서는 PDH 비율
+        // 카운터의 수집 간격이 0 에 가까워 사용률이 0 으로 나온다 — 화면의 값이 잠깐씩 0 으로 튀는 모양이다.
+        int shortGaps = gaps.Count(g => g < TimeSpan.TicksPerMillisecond * 50);
+        int longGaps = gaps.Count(g => g > TimeSpan.TicksPerMillisecond * 400);
+        int cpuZeros = 0;
+        if (registry.ActiveDevices.FirstOrDefault(d => d.SlotOf(MetricKind.CpuTotal) >= 0) is { } cpuDevice
+            && registry.Series(cpuDevice.SlotOf(MetricKind.CpuTotal)) is { } cpuSeries)
+            for (int i = 0; i < cpuSeries.Count; i++)
+                if (cpuSeries.IsMeasured(i) && cpuSeries[i] == 0) cpuZeros++;
+        Console.WriteLine($"짧은 틱(<50ms) {shortGaps}회 · 긴 틱(>400ms) {longGaps}회 · CPU 사용률 0 {cpuZeros}회");
+
         Array.Sort(gaps);
         var span = TimeSpan.FromTicks(stamps[copied - 1] - stamps[0]);
         Console.WriteLine(

@@ -167,9 +167,20 @@ public sealed class CardViewModel
         return new GpuMemorySummary($"{usedText.Value}{usedText.Unit}", used / capacity, used > capacity);
     }
 
-    private static float Read(MetricSeries? series, int? scrubIndex) =>
+    /// <summary>
+    /// 차트가 그리는 표시 창의 점 수. 스크럽 인덱스를 버퍼 인덱스로 옮길 때 <b>차트와 같은 값</b>을 써야 한다.
+    /// </summary>
+    /// <remarks>
+    /// 예전에는 240 으로 고정해 읽었다. 시간 폭(§9.4)이 점 수를 시각으로 환산하면서 60초 창이 틱 간격에 따라
+    /// 239·241·242점으로 매 틱 바뀌는데, 읽는 쪽만 240 이라 맨 오른쪽에 고정한 선이 버퍼 끝을 넘어
+    /// <b>전 카드가 동시에 값 없음(—)으로 깜빡였다</b>(실사용 보고). 가운데를 짚으면 한두 칸 옆 표본을 읽었다.
+    /// <see cref="Controls.CardView"/> 가 차트에 창 크기를 줄 때 여기에도 준다.
+    /// </remarks>
+    public int WindowPoints { get; set; } = 240;
+
+    private float Read(MetricSeries? series, int? scrubIndex) =>
         series is null ? float.NaN
-        : scrubIndex is { } index ? SampleAt(series, index)
+        : scrubIndex is { } index ? SampleAt(series, index, WindowPoints)
         : series.Latest;
 
     /// <summary>
@@ -185,12 +196,15 @@ public sealed class CardViewModel
         if (Cores.Count == 0) return [];
 
         var values = new float[Cores.Count];
-        for (int i = 0; i < values.Length; i++) values[i] = SampleAt(Cores[i], index);
+        for (int i = 0; i < values.Length; i++) values[i] = SampleAt(Cores[i], index, WindowPoints);
         return values;
     }
 
-    /// <summary>표시 창 안의 인덱스로 값을 읽는다. 창은 항상 최근 <paramref name="window"/>개다.</summary>
-    public static float SampleAt(MetricSeries series, int index, int window = 240)
+    /// <summary>
+    /// 표시 창 안의 인덱스로 값을 읽는다. 창은 항상 최근 <paramref name="window"/>개다.
+    /// 창 크기에 기본값을 두지 않는다 — 차트와 다른 값으로 읽으면 선과 숫자가 다른 순간을 가리킨다.
+    /// </summary>
+    public static float SampleAt(MetricSeries series, int index, int window)
     {
         int absolute = series.AbsoluteIndexOf(index, window);
         return absolute < 0 ? float.NaN : series[absolute];
@@ -211,7 +225,7 @@ public sealed class CardViewModel
         string Fmt(MetricSeries? s, MetricUnit unit, double factor = 1)
         {
             if (s is null) return "—";
-            float v = SampleAt(s, index);
+            float v = SampleAt(s, index, WindowPoints);
             return float.IsNaN(v) ? "—" : MetricFormatter.Format(unit, v * factor).ToString();
         }
 
