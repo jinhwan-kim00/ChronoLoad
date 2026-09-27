@@ -63,13 +63,31 @@ public readonly record struct SampleCommitted(long TimestampUtcTicks, long TickI
 
 /// <summary>
 /// 2-티어 샘플 루프. WPF <c>DispatcherTimer</c>는 UI 부하에 밀리므로 쓰지 않고
-/// 전용 백그라운드 태스크에서 <see cref="PeriodicTimer"/>로 돈다.
+/// <b>우선순위를 높인 전용 스레드</b>에서 돈다.
 /// </summary>
 /// <remarks>
 /// <para>
 /// <b>모든 시리즈는 Fast 틱마다 기록된다.</b> Slow 티어 프로바이더는 값을 덜 자주 갱신할 뿐이고
 /// 엔진은 직전 값을 그대로 다시 쓴다. 이렇게 해야 전 카드가 <b>동일한 시간 축</b>을 갖고,
 /// 동기화 스크럽(UX §08)에서 같은 인덱스가 같은 시각을 가리킨다.
+/// </para>
+/// <para>
+/// <b>왜 전용 스레드이고 왜 우선순위를 올리는가.</b> 예전에는 스레드 풀 위의 <see cref="PeriodicTimer"/> 였다.
+/// 감시 대상이 CPU 를 다 쓰면 모니터가 CPU 를 못 받는다 — 전 코어를 채운 실측에서 30초 동안 120 틱이어야 할
+/// 것이 42 틱만 돌았고 간격이 최대 1.2초로 벌어졌다. 부하를 재려는 순간에 시계열이 가장 성겨지는 셈이다.
+/// 샘플러는 CPU 를 1% 안팎만 쓰므로 스레드 하나를
+/// <see cref="ThreadPriority.Highest"/> 로 올려도 감시 대상을 밀어내지 않는다. 프로세스 우선순위는 건드리지
+/// 않는다 — UI 와 MCP 까지 올릴 이유는 없다.
+/// </para>
+/// <para>
+/// <b>우선순위만으로는 모자랐다.</b> 틱을 멈춘 것은 스케줄링이 아니라 네트워크 카운터 호출이 부하 속에서
+/// 막히는 것이었다. 그 호출은 <c>NetworkProvider</c> 가 자기 스레드로 옮겼다. 틱 하나가 느린 프로바이더
+/// 하나에 전부 묶이므로, 어느 프로바이더가 얼마나 걸리는지를 <see cref="ProviderDurations"/> 로 남긴다.
+/// </para>
+/// <para>
+/// <b>밀린 틱은 따라잡지 않는다.</b> <see cref="PeriodicTimer"/> 는 틱이 늦으면 다음 틱을 곧바로 한 번 더 돌린다.
+/// 그 틱은 PDH 비율 카운터의 수집 간격이 0 에 가까워 값이 튄다. 늦으면 늦은 대로 다음 주기부터 다시 센다 —
+/// 시간 축(§7.4)이 틱마다 시각을 남기므로 간격이 벌어진 것은 그대로 드러난다.
 /// </para>
 /// <para>
 /// <c>timeBeginPeriod</c>는 호출하지 않는다. 시스템 전역 타이머 해상도를 올리면 전력 소비가 늘어나는데,
@@ -89,7 +107,10 @@ public sealed class SampleEngine : IAsyncDisposable
     private int _scratchRevision = -1;
     private int _notifiedRevision = -1;
     private long _lastPurgeTimestamp;
-    private PeriodicTimer? _timer;
+    private Thread? _thread;
+
+    // 주기가 바뀌면 자고 있던 루프를 깨워 새 주기로 다시 예약하게 한다.
+    private readonly AutoResetEvent _paceChanged = new(false);
     private SamplePace _requestedPace = SamplePace.Full;
     private SamplePace _overloadPace = SamplePace.Full;
     private double _durationEwmaSeconds;
@@ -139,6 +160,19 @@ public sealed class SampleEngine : IAsyncDisposable
     /// 마지막 한 틱만 재면 판단할 수 없다 — 틱마다 몇 배씩 흔들린다.
     /// </summary>
     public TimeSpan TotalSampleDuration { get; private set; }
+
+    /// <summary>
+    /// 진단용. 프로바이더별 평균·최대 소요 시간. 샘플링이 느려졌을 때 어느 센서 탓인지 가른다.
+    /// </summary>
+    public IReadOnlyList<(string Id, TimeSpan Mean, TimeSpan Max, long Samples)> ProviderDurations
+    {
+        get
+        {
+            lock (_gate)
+                return _providers.Select(p => (p.Provider.Id,
+                    p.Samples == 0 ? TimeSpan.Zero : p.TotalDuration / p.Samples, p.MaxDuration, p.Samples)).ToArray();
+        }
+    }
 
     /// <summary>표본 구간 전체의 평균 샘플링 시간.</summary>
     public TimeSpan MeanSampleDuration =>
@@ -196,11 +230,27 @@ public sealed class SampleEngine : IAsyncDisposable
         lock (_gate) _providers.Add(new ProviderState(provider));
     }
 
+    /// <summary>샘플링 스레드의 우선순위. 감시 대상이 CPU 를 다 써도 제때 깨어나야 한다.</summary>
+    public const ThreadPriority SamplerPriority = ThreadPriority.Highest;
+
     public void Start()
     {
         if (_loop is not null) throw new InvalidOperationException("이미 시작됐다.");
         _lastTimestamp = Stopwatch.GetTimestamp();
-        _loop = Task.Run(() => RunAsync(_cts.Token));
+
+        var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _loop = done.Task;
+        _thread = new Thread(() =>
+        {
+            try { Run(_cts.Token); }
+            finally { done.TrySetResult(); }
+        })
+        {
+            Name = "ChronoLoad sampler",
+            IsBackground = true,
+            Priority = SamplerPriority,
+        };
+        _thread.Start();
     }
 
     /// <summary>테스트·하네스용. 루프를 돌리지 않고 한 틱만 수동으로 진행한다.</summary>
@@ -213,29 +263,58 @@ public sealed class SampleEngine : IAsyncDisposable
         Tick(elapsed);
     }
 
-    private async Task RunAsync(CancellationToken token)
+    /// <summary>
+    /// 샘플링 루프. 다음 틱 시각까지 기다렸다가 한 틱을 돌린다. 주기는 매번 다시 읽는다 —
+    /// 적응형 백오프(§6.3)가 바꾼 주기가 다음 틱부터 바로 적용된다.
+    /// </summary>
+    private void Run(CancellationToken token)
     {
-        using var timer = new PeriodicTimer(EffectiveFastPeriod);
-        _timer = timer;
-        try
+        WaitHandle[] wake = [token.WaitHandle, _paceChanged];
+        long last = Stopwatch.GetTimestamp();
+        long next = last + PeriodTicks();
+
+        while (!token.IsCancellationRequested)
         {
-            while (await timer.WaitForNextTickAsync(token).ConfigureAwait(false))
+            long wait = next - Stopwatch.GetTimestamp();
+            if (wait > 0)
             {
-                long now = Stopwatch.GetTimestamp();
-                double elapsed = Math.Max(1e-6, (double)(now - _lastTimestamp) / Stopwatch.Frequency);
-                _lastTimestamp = now;
+                int signaled = WaitHandle.WaitAny(wake, TimeSpan.FromSeconds((double)wait / Stopwatch.Frequency));
+                if (signaled == 0) break;
+
+                // 주기가 바뀌었다 — 직전 틱에서 새 주기만큼 뒤로 다시 잡는다. 1초 주기로 자던 루프가
+                // 창을 복원한 뒤에도 옛 예약 시각까지 자지 않게 한다.
+                if (signaled == 1)
+                {
+                    next = last + PeriodTicks();
+                    continue;
+                }
+            }
+
+            long now = Stopwatch.GetTimestamp();
+            double elapsed = Math.Max(1e-6, (double)(now - _lastTimestamp) / Stopwatch.Frequency);
+            _lastTimestamp = now;
+            last = now;
+
+            try
+            {
                 Tick(elapsed);
             }
-        }
-        catch (OperationCanceledException)
-        {
-            // 정상 종료
-        }
-        finally
-        {
-            _timer = null;
+            catch (Exception ex)
+            {
+                // 프로바이더 예외는 Tick 안에서 잡는다. 여기까지 온 것은 엔진 자체의 문제라
+                // 루프를 죽이지 않고 다음 틱을 본다 — 모니터가 조용히 멈추는 것이 더 나쁘다.
+                Debug.WriteLine($"[ChronoLoad] 틱 실패: {ex}");
+            }
+
+            // 다음 틱은 이번 틱의 예정 시각에서 한 주기 뒤. 이미 지났으면 따라잡지 않고 지금부터 한 주기 뒤다.
+            long period = PeriodTicks();
+            next += period;
+            long after = Stopwatch.GetTimestamp();
+            if (next <= after) next = after + period;
         }
     }
+
+    private long PeriodTicks() => (long)(EffectiveFastPeriod.TotalSeconds * Stopwatch.Frequency);
 
     private void Tick(double elapsedSeconds)
     {
@@ -280,7 +359,12 @@ public sealed class SampleEngine : IAsyncDisposable
             try
             {
                 var writer = new SampleWriter(_scratch, _measured, nowUtc, providerElapsed);
+                long providerBegin = Stopwatch.GetTimestamp();
                 state.Provider.Sample(in writer);
+                var took = Stopwatch.GetElapsedTime(providerBegin);
+                state.TotalDuration += took;
+                state.Samples++;
+                if (took > state.MaxDuration) state.MaxDuration = took;
                 state.LastSampledTimestamp = begin;
                 state.ConsecutiveFailures = 0;
             }
@@ -378,15 +462,12 @@ public sealed class SampleEngine : IAsyncDisposable
     }
 
     /// <summary>
-    /// 주기를 갈아끼운다. 루프를 다시 만들지 않는 이유는 그 사이에 틱이 비기 때문이다 —
-    /// <see cref="PeriodicTimer.Period"/> 는 돌고 있는 타이머에 바로 적용된다.
+    /// 주기를 갈아끼운다. 루프는 매 틱 <see cref="EffectiveFastPeriod"/> 를 다시 읽지만, 자고 있는 동안에는
+    /// 옛 예약 시각까지 깨지 않으므로 깨워서 새 주기로 다시 예약하게 한다.
     /// </summary>
     private void ApplyPace()
     {
-        var timer = _timer;
-        if (timer is null) return;
-
-        try { timer.Period = EffectiveFastPeriod; }
+        try { _paceChanged.Set(); }
         catch (ObjectDisposedException) { /* 종료 중이다 */ }
     }
 
@@ -421,6 +502,7 @@ public sealed class SampleEngine : IAsyncDisposable
         }
 
         _cts.Dispose();
+        _paceChanged.Dispose();
     }
 
     private sealed class ProviderState(ISensorProvider provider)
@@ -429,5 +511,8 @@ public sealed class SampleEngine : IAsyncDisposable
         public int ConsecutiveFailures { get; set; }
         public long? DisabledUntil { get; set; }
         public long LastSampledTimestamp { get; set; }
+        public TimeSpan TotalDuration { get; set; }
+        public TimeSpan MaxDuration { get; set; }
+        public long Samples { get; set; }
     }
 }

@@ -12,6 +12,7 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="ChronoLoad.Core.Tests" />
+    <InternalsVisibleTo Include="ChronoLoad.Harness" />
   </ItemGroup>
 
 </Project>

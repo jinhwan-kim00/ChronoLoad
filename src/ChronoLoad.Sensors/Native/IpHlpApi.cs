@@ -114,6 +114,10 @@ internal static partial class IpHlpApi
 
     [LibraryImport("iphlpapi.dll")]
     public static partial void FreeMibTable(nint memory);
+
+    /// <summary>인터페이스 하나. 행의 <c>InterfaceLuid</c> 를 채워 넘기면 나머지를 채워 준다.</summary>
+    [LibraryImport("iphlpapi.dll")]
+    public static partial uint GetIfEntry2(nint row);
 }
 
 /// <summary>
@@ -150,6 +154,27 @@ internal static class IfTable
         }
 
         return rows;
+    }
+
+    /// <summary>행 하나를 담을 버퍼 크기. <see cref="ReadEntry"/> 에 넘길 버퍼를 호출자가 잡는다.</summary>
+    public static int EntrySize => RowSize;
+
+    /// <summary>
+    /// 인터페이스 하나의 카운터. 감시하는 인터페이스만 읽는다 — 전체 표에는 필터·가상 어댑터가
+    /// 수십 개 섞여 있다. <paramref name="buffer"/> 는 <see cref="EntrySize"/> 바이트여야 한다.
+    /// </summary>
+    public static bool ReadEntry(ulong luid, nint buffer, out Counters counters)
+    {
+        counters = default;
+        unsafe { System.Runtime.InteropServices.NativeMemory.Clear((void*)buffer, (nuint)RowSize); }
+        Marshal.WriteInt64(buffer + LuidOffset, (long)luid);
+        if (IpHlpApi.GetIfEntry2(buffer) != 0) return false;
+
+        counters = new Counters(luid,
+            (ulong)Marshal.ReadInt64(buffer + InOctetsOffset),
+            (ulong)Marshal.ReadInt64(buffer + OutOctetsOffset),
+            (IfOperStatus)(uint)Marshal.ReadInt32(buffer + OperStatusOffset));
+        return true;
     }
 
     /// <summary>

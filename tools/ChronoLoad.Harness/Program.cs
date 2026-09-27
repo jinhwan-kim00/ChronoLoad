@@ -164,6 +164,29 @@ if (args.Contains("--nvml-pcie-probe"))
     return;
 }
 
+// CPU 사용률 카운터를 간격별로 직접 읽는다. 전부하에서 샘플러가 기록한 값이 OS 와 다를 때 원인을 가른다.
+if (args.Contains("--cpu-probe"))
+{
+    foreach (int ms in (int[])[250, 1000])
+    {
+        using var query = ChronoLoad.Sensors.Native.PdhQuery.TryOpen()!;
+        var utility = query.TryAddCounter(@"\Processor Information(_Total)\% Processor Utility")!;
+        var time = query.TryAddCounter(@"\Processor Information(_Total)\% Processor Time")!;
+        query.Collect();
+        var u = new List<string>(); var t = new List<string>();
+        for (int i = 0; i < 8; i++)
+        {
+            Thread.Sleep(ms);
+            query.Collect();
+            u.Add($"{utility.Read(noCap100: true):0.#}");
+            t.Add($"{time.Read(noCap100: true):0.#}");
+        }
+        Console.WriteLine($"{ms,5}ms  Utility {string.Join(" ", u)}");
+        Console.WriteLine($"{ms,5}ms  Time    {string.Join(" ", t)}");
+    }
+    return;
+}
+
 // Level Zero 의 PCIe 누적 통계. IGCL 에는 송수신 카운터가 없어 이쪽이 지원하는지 가른다.
 // IGCL 과 한 프로세스에서 함께 열지 않는다 — 같은 로더를 두 주인이 잡는다(§5.4).
 if (args.Contains("--l0-probe"))
@@ -419,6 +442,24 @@ if (watchedPid is { } pid && gpuProvider.Watch.Get(pid) is { } record)
     foreach (var ((adapter, family), values) in record.Engines)
         Console.WriteLine($"  {family,-14} {Summary(values)}  ({adapter})");
 }
+
+// --dump=지표 : 첫 장치의 그 지표를 틱별로 찍는다(마지막 40틱). 값의 모양을 봐야 할 때 쓴다.
+if (args.FirstOrDefault(a => a.StartsWith("--dump="))?["--dump=".Length..] is { } dumpName
+    && Enum.TryParse<MetricKind>(dumpName, true, out var dumpKind)
+    && registry.ActiveDevices.FirstOrDefault(d => d.SlotOf(dumpKind) >= 0) is { } dumpDevice
+    && registry.Series(dumpDevice.SlotOf(dumpKind)) is { } dumpSeries)
+{
+    Console.WriteLine();
+    Console.WriteLine($"{dumpKind} 틱별 (마지막 40틱, *=실측)");
+    int from = Math.Max(0, dumpSeries.Count - 40);
+    Console.WriteLine(string.Join(" ", Enumerable.Range(from, dumpSeries.Count - from)
+        .Select(i => $"{dumpSeries[i]:0.#}{(dumpSeries.IsMeasured(i) ? "*" : "")}")));
+}
+
+Console.WriteLine();
+Console.WriteLine("프로바이더별 소요 — 평균 · 최대 · 횟수");
+foreach (var (id, mean, max, n) in engine.ProviderDurations)
+    Console.WriteLine($"  {id,-10} {mean.TotalMilliseconds,8:0.00} ms · {max.TotalMilliseconds,8:0.0} ms · {n}");
 
 Console.WriteLine();
 double dutyCycle = engine.MeanSampleDuration.TotalSeconds / options.FastPeriod.TotalSeconds;

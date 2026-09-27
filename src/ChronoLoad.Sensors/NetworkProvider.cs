@@ -15,14 +15,39 @@ namespace ChronoLoad.Sensors;
 /// 같은 테이블을 인터페이스 수만큼 다시 읽게 된다.
 /// </para>
 /// <para>
+/// <b>카운터는 샘플링 스레드가 아니라 전용 스레드가 읽는다.</b> 감시 대상이 CPU 를 다 쓰면 인터페이스
+/// 카운터 호출이 막힌다 — 전 코어를 채운 실측에서 이 프로바이더 한 번이 평균 52ms, 최대 1.2초 걸렸고
+/// 그동안 CPU·GPU·디스크까지 모든 틱이 멈췄다(나머지 프로바이더는 같은 조건에서 2ms 안쪽).
+/// 읽기 스레드는 <b>자기가 읽은 시각</b>으로 처리량을 계산해 두고, 샘플러는 새 값이 있을 때만 가져간다.
+/// 막히면 네트워크 값만 늦게 오고, 늦게 와도 처리량은 실제 간격으로 나눈 값이다.
+/// </para>
+/// <para>
 /// <b>VPN·터널은 카드로 만들지 않는다.</b> 터널을 지나는 바이트는 하위 물리 NIC에도 그대로 계상되므로
 /// 같은 트래픽이 두 카드에 나타나고, "지금 회선을 얼마나 쓰고 있나"에 틀린 답을 주게 된다(설계서 §5.3).
 /// </para>
 /// </remarks>
 public sealed class NetworkProvider : ISensorProvider
 {
-    private readonly List<IfTable.Counters> _counters = [];
     private readonly Dictionary<ulong, Interface> _interfaces = [];
+
+    /// <summary>
+    /// 샘플러가 틱마다 다음 읽기를 청한다. 읽기 스레드가 제 타이머를 두지 않으므로 창을 최소화해 주기가
+    /// 1초로 늘면 읽기도 1초로 준다 — 따로 250ms 로 돌면 아무도 안 보는 동안 네 배로 깨어난다.
+    /// </summary>
+    private readonly AutoResetEvent _demand = new(true);
+
+    // 읽기 스레드가 쓰고 샘플러가 가져간다.
+    private readonly Lock _gate = new();
+    private readonly Dictionary<ulong, Reading> _latest = [];
+    private volatile ulong[] _watched = [];
+    private readonly CancellationTokenSource _stop = new();
+    private Thread? _reader;
+
+    /// <summary>
+    /// 읽기 스레드가 구한 한 번의 결과. <paramref name="Up"/> 이 거짓이면 링크가 내려간 것이다.
+    /// 처리량이 NaN 이면 기준선을 잡은 첫 읽기라 아직 모른다.
+    /// </summary>
+    private readonly record struct Reading(float Rx, float Tx, bool Up, long Sequence);
     private MetricRegistry? _registry;
     // 장치 이벤트 스레드가 쓰고 샘플링 스레드가 읽는다.
     private volatile bool _enumeratePending;
@@ -46,7 +71,70 @@ public sealed class NetworkProvider : ISensorProvider
         _registry = registry;
         Enumerate(registry);
         IsAvailable = true;
+
+        _reader = new Thread(ReadLoop)
+        {
+            Name = "ChronoLoad network counters",
+            IsBackground = true,
+            Priority = ThreadPriority.AboveNormal,
+        };
+        _reader.Start();
         return ValueTask.CompletedTask;
+    }
+
+    /// <summary>
+    /// 샘플러가 청할 때마다 감시하는 인터페이스의 카운터를 읽어 처리량을 구해 둔다. 시각은 <b>읽은 순간</b>의 것을 쓴다 —
+    /// 호출이 막혔다 풀렸을 때 틱 시각으로 나누면 막힌 시간만큼 처리량이 부풀거나 줄어든다.
+    /// </summary>
+    private void ReadLoop()
+    {
+        var baselines = new Dictionary<ulong, (ulong In, ulong Out, long Stamp)>();
+        nint buffer = System.Runtime.InteropServices.Marshal.AllocHGlobal(IfTable.EntrySize);
+        long sequence = 0;
+        var token = _stop.Token;
+        WaitHandle[] wake = [token.WaitHandle, _demand];
+
+        try
+        {
+            // 막혀 있던 동안 쌓인 요청은 AutoResetEvent 가 하나로 접는다 — 풀리면 한 번만 읽는다.
+            while (WaitHandle.WaitAny(wake) == 1)
+            {
+                var watched = _watched;
+
+                foreach (ulong luid in watched)
+                {
+                    if (!IfTable.ReadEntry(luid, buffer, out var counters)) continue;
+                    long stamp = System.Diagnostics.Stopwatch.GetTimestamp();
+                    sequence++;
+
+                    Reading reading;
+                    if (counters.OperStatus != IfOperStatus.Up)
+                    {
+                        baselines.Remove(luid);
+                        reading = new Reading(float.NaN, float.NaN, Up: false, sequence);
+                    }
+                    else if (baselines.TryGetValue(luid, out var previous) && stamp > previous.Stamp)
+                    {
+                        double seconds = (stamp - previous.Stamp) / (double)System.Diagnostics.Stopwatch.Frequency;
+                        reading = new Reading(
+                            (float)(Delta(previous.In, counters.InOctets) / seconds),
+                            (float)(Delta(previous.Out, counters.OutOctets) / seconds),
+                            Up: true, sequence);
+                    }
+                    else
+                    {
+                        reading = new Reading(float.NaN, float.NaN, Up: true, sequence);
+                    }
+
+                    baselines[luid] = (counters.InOctets, counters.OutOctets, stamp);
+                    lock (_gate) _latest[luid] = reading;
+                }
+            }
+        }
+        finally
+        {
+            System.Runtime.InteropServices.Marshal.FreeHGlobal(buffer);
+        }
     }
 
     /// <summary>장치 집합을 다시 읽는다. M5의 <c>DeviceWatcher</c>가 인터페이스 변경 때 호출한다.</summary>
@@ -82,6 +170,9 @@ public sealed class NetworkProvider : ISensorProvider
             registry.Retire(_interfaces[luid].Handle.Key, DateTime.UtcNow.Ticks);
             _interfaces.Remove(luid);
         }
+
+        // 읽기 스레드는 이 목록만 본다. 배열을 통째로 갈아 끼워 도중에 바뀌는 일이 없게 한다.
+        _watched = [.. _interfaces.Keys];
     }
 
     private bool ShouldShow(in MibIfRow2 row)
@@ -162,39 +253,30 @@ public sealed class NetworkProvider : ISensorProvider
             Enumerate(_registry);
         }
 
-        IfTable.ReadCounters(_counters);
-        long now = writer.TimestampUtcTicks;
-
-        foreach (var counter in _counters)
+        foreach (var state in _interfaces.Values)
         {
-            if (!_interfaces.TryGetValue(counter.Luid, out var state)) continue;
+            Reading reading;
+            lock (_gate)
+                if (!_latest.TryGetValue(state.Luid, out reading)) continue;
 
-            if (counter.OperStatus != IfOperStatus.Up)
-            {
-                // 링크가 내려간 것은 제거가 아니다. 카드는 남기고 값만 공백으로 둔다.
-                writer.WriteUnavailable(state.RxSlot);
-                writer.WriteUnavailable(state.TxSlot);
-                state.HasBaseline = false;
-                continue;
-            }
+            // 새 결과가 없으면 쓰지 않는다 — 직전 값이 유지되고 실측으로 세지 않는다.
+            if (reading.Sequence == state.ConsumedSequence) continue;
+            state.ConsumedSequence = reading.Sequence;
 
-            if (!state.HasBaseline)
+            if (!reading.Up || float.IsNaN(reading.Rx))
             {
-                state.Snapshot(counter, now);
+                // 링크가 내려갔거나 기준선뿐이다. 링크가 내려간 것은 제거가 아니므로 카드는 남기고 값만 비운다.
                 writer.WriteUnavailable(state.RxSlot);
                 writer.WriteUnavailable(state.TxSlot);
                 continue;
             }
 
-            double elapsed = Math.Max(1e-6, (now - state.LastSampleUtcTicks) / (double)TimeSpan.TicksPerSecond);
-            float rx = (float)(Delta(state.LastIn, counter.InOctets) / elapsed);
-            float tx = (float)(Delta(state.LastOut, counter.OutOctets) / elapsed);
-
-            writer.Write(state.RxSlot, rx);
-            writer.Write(state.TxSlot, tx);
-
-            state.Snapshot(counter, now);
+            writer.Write(state.RxSlot, reading.Rx);
+            writer.Write(state.TxSlot, reading.Tx);
         }
+
+        // 다음 틱에 쓸 값을 지금 읽어 두게 한다. 값은 한 주기 늦지만 간격은 읽은 시각으로 나눈 실제 간격이다.
+        _demand.Set();
     }
 
     /// <summary>
@@ -206,6 +288,13 @@ public sealed class NetworkProvider : ISensorProvider
 
     public void Dispose()
     {
+        _stop.Cancel();
+        // 읽기가 막혀 2초 안에 못 끝나면 핸들을 남겨 둔다 — 풀린 스레드가 닫힌 핸들을 건드리지 않게.
+        if (_reader is null || _reader.Join(TimeSpan.FromSeconds(2)))
+        {
+            _stop.Dispose();
+            _demand.Dispose();
+        }
         _interfaces.Clear();
         IsAvailable = false;
     }
@@ -216,17 +305,8 @@ public sealed class NetworkProvider : ISensorProvider
         public required DeviceHandle Handle { get; set; }
         public int RxSlot { get; init; }
         public int TxSlot { get; init; }
-        public ulong LastIn { get; private set; }
-        public ulong LastOut { get; private set; }
-        public long LastSampleUtcTicks { get; private set; }
-        public bool HasBaseline { get; set; }
 
-        public void Snapshot(in IfTable.Counters counters, long nowUtcTicks)
-        {
-            LastIn = counters.InOctets;
-            LastOut = counters.OutOctets;
-            LastSampleUtcTicks = nowUtcTicks;
-            HasBaseline = true;
-        }
+        /// <summary>샘플러가 마지막으로 가져간 읽기 번호. 같으면 새 결과가 없는 것이다.</summary>
+        public long ConsumedSequence { get; set; }
     }
 }
