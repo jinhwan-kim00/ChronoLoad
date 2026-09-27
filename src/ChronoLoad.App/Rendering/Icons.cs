@@ -121,6 +121,14 @@ public static class Icons
         Lines((2.5, 5.5, 13.5, 5.5), (2.5, 10.5, 13.5, 10.5)),
         Circle(5.8, 5.5, 1.7), Circle(10.2, 10.5, 1.7));
     public static Geometry Minimize { get; } = Parse("M3.5,8.5 H12.5");
+
+    /// <summary>
+    /// 시계 — 헤더 숫자가 "지금이 아니라 스크럽한 시점의 값"임을 표시한다(§8.7).
+    /// 예전의 점 표시는 숫자 바로 앞에 붙어 <c>.96</c> 처럼 소수점으로 읽혔다.
+    /// </summary>
+    public static Geometry Clock { get; } = Group(
+        Circle(8, 8, 5.6),
+        Parse("M8,4.9 V8 L10.2,9.5"));
     public static Geometry Close { get; } = Parse("M4,4 L12,12 M12,4 L4,12");
 
     public static Geometry For(IconKind kind) => kind switch

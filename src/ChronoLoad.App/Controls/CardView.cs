@@ -54,7 +54,7 @@ public sealed class CardView : Border
     private readonly TextBlock _scale;
     private readonly Border _overlay;
     private readonly StackPanel _overlayRows;
-    private readonly System.Windows.Shapes.Ellipse _scrubDot;
+    private readonly System.Windows.Shapes.Path _scrubClock;
 
     private bool _collapsed;
 
@@ -218,15 +218,21 @@ public sealed class CardView : Border
             Margin = new Thickness(6, 0, 0, 0),
         };
         // 스크럽 중임을 알리는 점. "지금 값이 아님"을 한 글자도 쓰지 않고 표시한다.
-        _scrubDot = new System.Windows.Shapes.Ellipse
+        // 스크럽한 시점의 값이면 숫자 앞에 시계를 둔다. 점으로 표시하던 때는 ".96" 처럼 소수점으로 읽혔다.
+        _scrubClock = new System.Windows.Shapes.Path
         {
-            Width = 4,
-            Height = 4,
-            Margin = new Thickness(0, 0, 5, 4),
+            Data = Icons.Clock,
+            StrokeThickness = 1.7,
+            StrokeStartLineCap = PenLineCap.Round,
+            StrokeEndLineCap = PenLineCap.Round,
+            Stretch = Stretch.None,
+            Width = Icons.DesignSize,
+            Height = Icons.DesignSize,
+            Margin = new Thickness(0, 0, 4, 3),
             VerticalAlignment = VerticalAlignment.Bottom,
             Visibility = Visibility.Collapsed,
         };
-        valuePanel.Children.Add(_scrubDot);
+        valuePanel.Children.Add(_scrubClock);
 
         _value = new TextBlock
         {
@@ -473,7 +479,7 @@ public sealed class CardView : Border
         _chart.Palette = palette;
         _overlay.Background = Frozen(palette.Surface2);
         _overlay.BorderBrush = Frozen(palette.Line);
-        _scrubDot.Fill = Frozen(palette.Dim);
+        _scrubClock.Stroke = Frozen(palette.Dim);
         _spark.Accent = accent;
         _spark.Palette = palette;
     }
@@ -540,11 +546,15 @@ public sealed class CardView : Border
     /// <summary>
     /// 전 카드가 같은 인덱스를 받는다. 포커스 카드만 전체 패널을 띄우고 나머지는 요약 칩이다.
     /// </summary>
-    public void ApplyScrub(int? index, bool isFocus, ThemePalette palette)
+    /// <param name="live">
+    /// 선이 맨 오른쪽(지금)을 따라가는 중인가. 그때 헤더의 값은 최신값이므로 "지금 아님" 표시를 하지 않는다.
+    /// </param>
+    public void ApplyScrub(int? index, bool isFocus, ThemePalette palette, bool live = false)
     {
         _chart.ScrubIndex = index;
-        _scrubDot.Visibility = index is null ? Visibility.Collapsed : Visibility.Visible;
-        _value.Foreground = Frozen(index is null ? palette.Fg : palette.Dim);
+        bool past = index is not null && !live;
+        _scrubClock.Visibility = past ? Visibility.Visible : Visibility.Collapsed;
+        _value.Foreground = Frozen(past ? palette.Dim : palette.Fg);
 
         if (index is null || Model.Collapsed)
         {

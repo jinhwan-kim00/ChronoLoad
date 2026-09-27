@@ -549,7 +549,7 @@ public partial class MainWindow : Window
     {
         var palette = _theme.Palette;
         foreach (var card in _cards)
-            card.ApplyScrub(_scrub.Index, _scrub.FocusCardKey == card.Model.Key, palette);
+            card.ApplyScrub(_scrub.Index, _scrub.FocusCardKey == card.Model.Key, palette, _scrub.IsTrackingLive);
 
         RefreshCards();
     }
@@ -648,7 +648,7 @@ public partial class MainWindow : Window
         {
             var palette = _theme.Palette;
             foreach (var card in _cards)
-                card.ApplyScrub(scrub, _scrub.FocusCardKey == card.Model.Key, palette);
+                card.ApplyScrub(scrub, _scrub.FocusCardKey == card.Model.Key, palette, _scrub.IsTrackingLive);
         }
 
         // 폭은 초로 세고 점 개수로 환산한다(§9.4). 배속이 바뀌면 같은 60초가 다른 점 수가 되므로
