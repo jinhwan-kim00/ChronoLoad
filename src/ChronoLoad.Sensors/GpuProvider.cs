@@ -214,7 +214,10 @@ public sealed class GpuProvider : ISensorProvider
             // 나중에 드라이버가 붙었을 때 시리즈를 새로 만들 필요가 없다.
             var handle = registry.Register(info,
                 [MetricKind.GpuUtil, MetricKind.GpuCompute, MetricKind.GpuDedicated, MetricKind.GpuShared,
-                 MetricKind.GpuTemp, MetricKind.GpuPower, MetricKind.GpuClock]);
+                 MetricKind.GpuTemp, MetricKind.GpuPower, MetricKind.GpuClock,
+                 MetricKind.Gpu3D, MetricKind.GpuCopy, MetricKind.GpuVideo, MetricKind.GpuMemBusy,
+                 MetricKind.GpuPowerLimit, MetricKind.GpuThrottlePower, MetricKind.GpuThrottleThermal,
+                 MetricKind.GpuThrottleOther]);
 
             var accelerator = new Accelerator
             {
@@ -228,6 +231,14 @@ public sealed class GpuProvider : ISensorProvider
                 TempSlot = handle.SlotOf(MetricKind.GpuTemp),
                 PowerSlot = handle.SlotOf(MetricKind.GpuPower),
                 ClockSlot = handle.SlotOf(MetricKind.GpuClock),
+                Graphics3DSlot = handle.SlotOf(MetricKind.Gpu3D),
+                CopySlot = handle.SlotOf(MetricKind.GpuCopy),
+                VideoSlot = handle.SlotOf(MetricKind.GpuVideo),
+                MemBusySlot = handle.SlotOf(MetricKind.GpuMemBusy),
+                PowerLimitSlot = handle.SlotOf(MetricKind.GpuPowerLimit),
+                ThrottlePowerSlot = handle.SlotOf(MetricKind.GpuThrottlePower),
+                ThrottleThermalSlot = handle.SlotOf(MetricKind.GpuThrottleThermal),
+                ThrottleOtherSlot = handle.SlotOf(MetricKind.GpuThrottleOther),
             };
 
             BindVendor(accelerator, known);
@@ -265,7 +276,7 @@ public sealed class GpuProvider : ISensorProvider
 
         // 잠들어 있으면 붙이지 않는다. 바인딩 과정 자체가 장치를 건드린다.
         accelerator.PowerState = _power.Query(address);
-        if (accelerator.PowerState == DevicePowerState.Off) return;
+        if (accelerator.PowerState == DevicePowerState.Off) { accelerator.HasSlept = true; return; }
 
         foreach (var vendor in _vendors)
         {
@@ -347,6 +358,13 @@ public sealed class GpuProvider : ISensorProvider
                 ["vendorId"] = $"0x{vendor:X4}",
                 ["luid"] = token,
                 ["metadataSource"] = known is null ? "PDH 전용 (D3DKMT 미열거)" : "D3DKMT",
+                // HAGS. 켜져 있으면 NVIDIA 의 CUDA 가 3D 엔진으로 합산된다(§5.4). MCP 의 aiSignals 가 읽는다.
+                ["hardwareScheduling"] = known?.HardwareScheduling switch
+                {
+                    true => "true",
+                    false => "false",
+                    null => "unknown",
+                },
             },
         };
     }
@@ -415,6 +433,7 @@ public sealed class GpuProvider : ISensorProvider
             // 이번 틱의 슬롯 버퍼에는 새 슬롯 자리가 없다. SampleWriter 가 범위 밖을 무시하므로
             // 다음 틱부터 값이 들어간다.
             if (_accelerators.Count > 0) _enumeratePending = false;
+            PublishLayers();
         }
 
         if (_rebindPending) RebindVendors();
@@ -431,6 +450,8 @@ public sealed class GpuProvider : ISensorProvider
             ReadEngines(writer);
             if (TraceVendorCalls) SensorLog.Write($"[틱 {_tick}] 엔진 완료");
         }
+
+        if (_tick % VendorSlowEvery == 0) PublishLayers();
     }
 
     /// <summary>
@@ -470,6 +491,7 @@ public sealed class GpuProvider : ISensorProvider
                 }
 
                 accelerator.PowerState = state;
+                if (state == DevicePowerState.Off) accelerator.HasSlept = true;
                 accelerator.Handle.Availability = state == DevicePowerState.Off
                     ? DeviceAvailability.Standby
                     : DeviceAvailability.Active;
@@ -487,15 +509,34 @@ public sealed class GpuProvider : ISensorProvider
             // 저전력 대기 중인 장치는 건드리지 않는다. 벤더 SDK 로 값을 물으면 장치가 깨어나는데,
             // 모니터링 도구가 감시 대상을 깨우는 것은 그 자체로 틀렸다 — 전력을 쓰고, 지연이 생기고,
             // Intel Arc 에서는 전원 전이 중 네이티브 호출이 프로세스를 죽이기까지 했다.
-            if (full && accelerator.PowerState == DevicePowerState.Off)
+            //
+            // 가벼운 틱에도 사용률을 네이티브로 읽으므로(NVML·IGCL) 한 번이라도 잠든 적이 있는 장치는
+            // 그때도 전원을 본다. 4틱마다만 보면 그 사이에 잠든 장치를 최대 세 번 두드리게 된다.
+            // 전원 조회는 OS 캐시를 읽을 뿐이라 장치를 깨우지 않지만 공짜는 아니다 — 모든 어댑터에
+            // 매 틱 걸었더니 듀티 사이클이 0.97% → 1.13% 로 올랐다. 잠들지 않는 데스크톱 GPU 에는 걸지 않는다.
+            if (!full && accelerator.HasSlept && accelerator.PciAddress is { } address)
+                accelerator.PowerState = _power.Query(address);
+
+            if (accelerator.PowerState == DevicePowerState.Off)
             {
-                writer.WriteUnavailable(accelerator.TempSlot);
-                writer.WriteUnavailable(accelerator.PowerSlot);
-                writer.WriteUnavailable(accelerator.ClockSlot);
+                accelerator.HasVendorUtil = false;
+                if (full)
+                {
+                    writer.WriteUnavailable(accelerator.TempSlot);
+                    writer.WriteUnavailable(accelerator.PowerSlot);
+                    writer.WriteUnavailable(accelerator.ClockSlot);
+                    writer.WriteUnavailable(accelerator.PowerLimitSlot);
+                    writer.WriteUnavailable(accelerator.ThrottlePowerSlot);
+                    writer.WriteUnavailable(accelerator.ThrottleThermalSlot);
+                    writer.WriteUnavailable(accelerator.ThrottleOtherSlot);
+                    _limitReasons[accelerator.Handle.Key] = null;
+                }
                 continue;
             }
 
-            float util = float.NaN, temp = float.NaN, power = float.NaN, clock = float.NaN;
+            float util = float.NaN, memBusy = float.NaN, temp = float.NaN, power = float.NaN, clock = float.NaN;
+            float powerLimit = float.NaN;
+            GpuLimitReasons? reasons = null;
             foreach (var binding in accelerator.Vendors)
             {
                 if (TraceVendorCalls && full)
@@ -510,9 +551,12 @@ public sealed class GpuProvider : ISensorProvider
                 if (!got) continue;
 
                 if (float.IsNaN(util)) util = sample.UtilPercent;
+                if (float.IsNaN(memBusy)) memBusy = sample.MemBusyPercent;
                 if (float.IsNaN(temp)) temp = sample.TemperatureCelsius;
                 if (float.IsNaN(power)) power = sample.PowerWatts;
                 if (float.IsNaN(clock)) clock = sample.CoreClockMegahertz;
+                if (float.IsNaN(powerLimit)) powerLimit = sample.PowerLimitWatts;
+                reasons ??= sample.LimitReasons;
 
                 // 온도·전력·클럭이 다 찼으면 남은 경로는 물어볼 이유가 없다. 사용률을 조건에
                 // 넣지 않는 것은, 그건 계층 A(PDH)가 이미 모든 어댑터에서 채우기 때문이다 —
@@ -522,12 +566,36 @@ public sealed class GpuProvider : ISensorProvider
 
             accelerator.HasVendorUtil = !float.IsNaN(util);
             if (accelerator.HasVendorUtil) writer.Write(accelerator.UtilSlot, util);
+            if (!float.IsNaN(memBusy)) writer.Write(accelerator.MemBusySlot, memBusy);
 
             if (!float.IsNaN(temp)) writer.Write(accelerator.TempSlot, temp);
             if (!float.IsNaN(power)) writer.Write(accelerator.PowerSlot, power);
             if (!float.IsNaN(clock)) writer.Write(accelerator.ClockSlot, clock);
+            if (!float.IsNaN(powerLimit)) writer.Write(accelerator.PowerLimitSlot, powerLimit);
+
+            // 제한 사유는 켜짐 100 · 꺼짐 0 으로 적는다. 1초에 한 번 찍으므로 구간 평균이 곧
+            // "그 제한에 걸려 있던 시간 비율"이고, 포화 비율·이력도 다른 지표와 똑같이 나온다.
+            if (full && reasons is { } r)
+            {
+                var (onPower, onThermal, onOther) = r.Split();
+                writer.Write(accelerator.ThrottlePowerSlot, onPower ? 100 : 0);
+                writer.Write(accelerator.ThrottleThermalSlot, onThermal ? 100 : 0);
+                writer.Write(accelerator.ThrottleOtherSlot, onOther ? 100 : 0);
+            }
+
+            if (full) _limitReasons[accelerator.Handle.Key] = reasons;
         }
     }
+
+    // 샘플링 스레드만 쓰고 MCP 스레드가 읽는다. 값 하나짜리 갱신이라 동시 사전으로 둔다.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, GpuLimitReasons?> _limitReasons =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// 어댑터(장치 키)의 최근 클럭 제한 사유. 벤더 경로가 사유를 주지 않으면 null.
+    /// <c>get_gpu_status</c> 가 이름 목록으로 보고한다.
+    /// </summary>
+    public GpuLimitReasons? LimitReasons(string deviceKey) => _limitReasons.GetValueOrDefault(deviceKey);
 
     private void ReadMemory(in SampleWriter writer)
     {
@@ -558,15 +626,14 @@ public sealed class GpuProvider : ISensorProvider
             {
                 writer.WriteUnavailable(accelerator.UtilSlot);
                 writer.WriteUnavailable(accelerator.ComputeSlot);
+                writer.WriteUnavailable(accelerator.Graphics3DSlot);
+                writer.WriteUnavailable(accelerator.CopySlot);
+                writer.WriteUnavailable(accelerator.VideoSlot);
             }
             return;
         }
 
-        foreach (var accelerator in _accelerators.Values)
-        {
-            accelerator.EngineGroups.Clear();
-            accelerator.ComputeUtil = 0;
-        }
+        foreach (var accelerator in _accelerators.Values) accelerator.EngineGroups.Clear();
 
         _engine.Read((instance, value) =>
         {
@@ -578,26 +645,57 @@ public sealed class GpuProvider : ISensorProvider
             accelerator.EngineGroups[group] = sum + value;
         }, noCap100: true);
 
+        var breakdown = new Dictionary<string, IReadOnlyDictionary<string, double>>(StringComparer.OrdinalIgnoreCase);
+        Span<double> families = stackalloc double[4];   // 3D · Compute · Copy · Video
+
         foreach (var accelerator in _accelerators.Values)
         {
             double best = 0;
+            families.Clear();
+            var types = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+
             foreach (var (group, sum) in accelerator.EngineGroups)
             {
-                best = Math.Max(best, sum);
+                double value = Math.Clamp(sum, 0, 100);
+                best = Math.Max(best, value);
+                types[group.Length == 0 ? "(unnamed)" : group] = Math.Round(value, 2);
 
-                // NPU 는 Neural 엔진이 곧 연산 사용률이다.
-                bool isComputeGroup = group.Equals("Compute", StringComparison.OrdinalIgnoreCase)
-                                      || (accelerator.IsNpu && group.Equals("Neural", StringComparison.OrdinalIgnoreCase));
-                if (isComputeGroup) accelerator.ComputeUtil = Math.Min(100, sum);
+                // 계열 안에서는 종류끼리 최댓값이다 — 사용률 정의(그룹 안은 합, 그룹끼리는 최댓값)를
+                // 계열 단위로 옮긴 것이다. 이름을 묶는 규칙은 GpuEngineFamilies 에 있다.
+                if (GpuEngineFamilies.Classify(group) is { } family)
+                    families[FamilySlot(family)] = Math.Max(families[FamilySlot(family)], value);
             }
 
             // 벤더 경로가 이미 더 촘촘한 사용률을 넣었으면 덮어쓰지 않는다.
             if (!accelerator.HasVendorUtil)
-                writer.Write(accelerator.UtilSlot, (float)Math.Clamp(best, 0, 100));
+                writer.Write(accelerator.UtilSlot, (float)best);
 
-            writer.Write(accelerator.ComputeSlot, (float)accelerator.ComputeUtil);
+            writer.Write(accelerator.Graphics3DSlot, (float)families[0]);
+            writer.Write(accelerator.ComputeSlot, (float)families[1]);
+            writer.Write(accelerator.CopySlot, (float)families[2]);
+            writer.Write(accelerator.VideoSlot, (float)families[3]);
+
+            breakdown[accelerator.Handle.Key] = types;
         }
+
+        _engineBreakdown = breakdown;
+
+        static int FamilySlot(MetricKind kind) => kind switch
+        {
+            MetricKind.Gpu3D => 0,
+            MetricKind.GpuCompute => 1,
+            MetricKind.GpuCopy => 2,
+            _ => 3,
+        };
     }
+
+    // 샘플링 스레드가 통째로 갈아 끼우고 MCP 스레드가 읽는다. 사전을 고치지 않고 새로 만든다.
+    private volatile Dictionary<string, IReadOnlyDictionary<string, double>> _engineBreakdown =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>어댑터(장치 키)의 엔진 종류별 최근 사용률. <c>get_gpu_status(verbose)</c> 가 보고한다.</summary>
+    public IReadOnlyDictionary<string, double>? EngineBreakdown(string deviceKey) =>
+        _engineBreakdown.GetValueOrDefault(deviceKey);
 
     /// <summary>인스턴스명 예: <c>pid_4_luid_0x00000000_0x000180A3_phys_0_eng_0_engtype_Neural</c>.</summary>
     private static string? ParseLuidToken(string instance)
@@ -677,11 +775,36 @@ public sealed class GpuProvider : ISensorProvider
         return !sawIntel;
     }
 
-    /// <summary>어댑터별로 어떤 계층이 붙었는지. <c>describe_capabilities</c> 가 보고한다.</summary>
-    public IReadOnlyDictionary<string, string> TelemetryLayers =>
-        _accelerators.Values.ToDictionary(
-            a => a.Handle.Info.ShortName,
-            a => a.Vendors.Count == 0 ? "PDH" : string.Join("+", a.Vendors.Select(v => v.Telemetry.Name)));
+    /// <summary>
+    /// 어댑터(장치 키)별로 어떤 계층이 붙었는지. <c>describe_capabilities</c>·<c>get_gpu_status</c> 가 보고한다.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>샘플링 스레드에서 만든 사본을 준다.</b> 예전에는 MCP 스레드가 가속기 사전을 직접 훑었다 —
+    /// 재열거와 겹치면 열거 중 수정 예외가 난다. 키도 이름이었는데, 같은 모델 두 장이면
+    /// <c>ToDictionary</c> 가 중복 키로 던진다.
+    /// </para>
+    /// <para>
+    /// 벤더 경로가 없는 이유가 절전이면 <c>PDH (standby)</c> 로 적는다. 절전 중인 어댑터는 깨우지 않으려고
+    /// 벤더 경로를 열지 않으므로(§6.3), 같은 장치가 한 번은 PDH, 깨어난 뒤에는 IGCL 로 보인다 —
+    /// 이유가 적혀 있지 않으면 두 툴이 서로 다른 말을 하는 것처럼 읽힌다.
+    /// </para>
+    /// </remarks>
+    public IReadOnlyDictionary<string, string> TelemetryLayers => _layers;
+
+    private volatile IReadOnlyDictionary<string, string> _layers = new Dictionary<string, string>();
+
+    private void PublishLayers()
+    {
+        var layers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var a in _accelerators.Values)
+        {
+            layers[a.Handle.Key] = a.Vendors.Count > 0
+                ? string.Join("+", a.Vendors.Select(v => v.Telemetry.Name))
+                : a.PowerState == DevicePowerState.Off ? "PDH (standby)" : "PDH";
+        }
+        _layers = layers;
+    }
 
     public void Dispose()
     {
@@ -718,8 +841,18 @@ public sealed class GpuProvider : ISensorProvider
         /// <summary>마지막으로 본 전원 상태. <see cref="DevicePowerState.Off"/> 면 건드리지 않는다.</summary>
         public DevicePowerState PowerState { get; set; } = DevicePowerState.Unknown;
         public bool HasVendorUtil { get; set; }
+
+        /// <summary>절전(D3)에 들어간 것을 본 적이 있는가. 그런 장치만 매 틱 전원을 확인한다.</summary>
+        public bool HasSlept { get; set; }
         public Dictionary<string, double> EngineGroups { get; } = new(StringComparer.OrdinalIgnoreCase);
-        public double ComputeUtil { get; set; }
+        public int Graphics3DSlot { get; init; }
+        public int CopySlot { get; init; }
+        public int VideoSlot { get; init; }
+        public int MemBusySlot { get; init; }
+        public int PowerLimitSlot { get; init; }
+        public int ThrottlePowerSlot { get; init; }
+        public int ThrottleThermalSlot { get; init; }
+        public int ThrottleOtherSlot { get; init; }
         public Memory Pending;
 
         public struct Memory

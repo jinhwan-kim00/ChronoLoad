@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using ChronoLoad.Core.Metrics;
 
 namespace ChronoLoad.Sensors.Vendor;
 
@@ -22,6 +23,8 @@ internal static partial class IgclNative
     public const int ItemGpuEnergyCounter = 32;
     public const int ItemGpuClockFrequency = 80;
     public const int ItemGpuTemperature = 104;
+    /// <summary>GPU 가 무엇이든 하고 있던 누적 시간(초). 타임스탬프와의 기울기가 곧 사용률이다.</summary>
+    public const int ItemGlobalActivity = 128;
 
     // ctl_oc_telemetry_item_t 내부 오프셋
     public const int ItemSupported = 0;     // bool
@@ -42,6 +45,31 @@ internal static partial class IgclNative
 
     [LibraryImport("ControlLib.dll", EntryPoint = "ctlPowerTelemetryGet")]
     public static partial uint PowerTelemetryGet(nint adapter, nint telemetry);
+
+    [LibraryImport("ControlLib.dll", EntryPoint = "ctlEnumPowerDomains")]
+    public static partial uint EnumPowerDomains(nint adapter, ref uint count, nint handles);
+
+    [LibraryImport("ControlLib.dll", EntryPoint = "ctlPowerGetProperties")]
+    public static partial uint PowerGetProperties(nint power, nint properties);
+
+    [LibraryImport("ControlLib.dll", EntryPoint = "ctlPowerGetLimits")]
+    public static partial uint PowerGetLimits(nint power, nint limits);
+
+    // ctl_power_telemetry_t 의 제한 플래그(bool 5개, mediaActivityCounter 바로 뒤)
+    public const int FlagPowerLimited = 200;
+    public const int FlagTemperatureLimited = 201;
+    public const int FlagCurrentLimited = 202;
+    public const int FlagVoltageLimited = 203;
+    public const int FlagUtilizationLimited = 204;
+
+    /// <summary>
+    /// <c>ctl_power_limits_t</c> 의 sizeof. Size(4) · Version(1) → 4바이트 정렬로 8 에서 sustained{bool·power·interval}
+    /// 12바이트, 20 에서 burst{bool·power} 8바이트, 28 에서 peak{powerAC·powerDC} 8바이트 = 36.
+    /// </summary>
+    public const int PowerLimitsSize = 36;
+    public const int SustainedEnabled = 8;
+    public const int SustainedPower = 12;         // mW
+    public const int PeakPowerAc = 28;            // mW
 }
 
 /// <summary>
@@ -219,12 +247,26 @@ public sealed class IgclTelemetry : IVendorTelemetry
 
     public bool TryBind(PciAddress address, out int handle) => _byAddress.TryGetValue(address, out handle);
 
+    /// <remarks>
+    /// <para>
+    /// <b>사용률은 매 틱 읽는다.</b> <c>globalActivityCounter</c>(누적 활동 초)를 타임스탬프로 나눈 기울기라
+    /// 두 읽기 사이 <b>전 구간의 시간 가중 평균</b>이다 — 순간값을 찍는 것이 아니어서 250ms 사이의
+    /// 버스트도 빠짐없이 들어간다. PDH 엔진 와일드카드는 비싸서 1초에 한 번뿐이라, 이것이 없으면
+    /// Intel 어댑터만 사용률이 1초 해상도였다. NVML 의 사용률과 정의도 같다(무엇이든 돈 시간의 비율).
+    /// </para>
+    /// <para>
+    /// <b>클럭은 활동이 있을 때만 낸다.</b> <c>gpuCurrentClockFrequency</c> 는 렌더 블록이 절전(RC6)에
+    /// 들어가 있어도 마지막 요청 주파수를 그대로 돌려준다 — 실사용에서 유휴 B580 이 2850 MHz(최대)로
+    /// 고정돼 보였다. 실측에서는 깨어난 직후 첫 읽기가 2850 MHz·1.035 V, 이어서 400 MHz·0.74 V 였다.
+    /// 직전 1초 동안 활동이 <see cref="ClockActivityFloor"/> 미만이면 돌고 있는 클럭이 없는 것이므로
+    /// 값을 비운다. 0 을 쓰지 않는 것은 그것이 측정값이 아니기 때문이다.
+    /// </para>
+    /// </remarks>
     public bool TryRead(int handle, bool full, out VendorSample sample)
     {
         sample = VendorSample.Empty;
 
-        // 이 경로는 사용률을 내주지 않는다. 가벼운 틱에는 할 일이 없다.
-        if (!full || !IsAvailable || (uint)handle >= (uint)_devices.Count) return false;
+        if (!IsAvailable || (uint)handle >= (uint)_devices.Count) return false;
 
         var device = _devices[handle];
 
@@ -248,16 +290,140 @@ public sealed class IgclTelemetry : IVendorTelemetry
 
         bool any = false;
 
+        double activity = ReadItem(IgclNative.ItemGlobalActivity);
+        double stamp = ReadItem(IgclNative.ItemTimeStamp);
+        if (ActivityPercent(ref device.Tick, activity, stamp) is { } util)
+        {
+            sample.UtilPercent = (float)util;
+            any = true;
+        }
+
+        if (!full) return any;
+
+        double? recentActivity = ActivityPercent(ref device.Full, activity, stamp);
+
         double celsius = ReadItem(IgclNative.ItemGpuTemperature);
         if (celsius is > MinCelsius and <= MaxCelsius) { sample.TemperatureCelsius = (float)celsius; any = true; }
 
         double megahertz = ReadItem(IgclNative.ItemGpuClockFrequency);
-        if (megahertz is > 0 and <= MaxMegahertz) { sample.CoreClockMegahertz = (float)megahertz; any = true; }
+        bool clockRunning = recentActivity is not { } busy || busy >= ClockActivityFloor;
+        if (clockRunning && megahertz is > 0 and <= MaxMegahertz)
+        {
+            sample.CoreClockMegahertz = (float)megahertz;
+            any = true;
+        }
 
         if (TryEnergyToWatts(device, out float watts)) { sample.PowerWatts = watts; any = true; }
 
+        // 제한 플래그는 같은 구조체에 이미 와 있다. 추가 호출이 없다.
+        sample.LimitReasons = ReadLimitFlags();
+
+        if (PowerLimitWatts(device) is { } limit) { sample.PowerLimitWatts = limit; any = true; }
+
         return any;
     }
+
+    private GpuLimitReasons ReadLimitFlags()
+    {
+        var r = GpuLimitReasons.None;
+        if (Marshal.ReadByte(_scratch, IgclNative.FlagPowerLimited) != 0) r |= GpuLimitReasons.Power;
+        if (Marshal.ReadByte(_scratch, IgclNative.FlagTemperatureLimited) != 0) r |= GpuLimitReasons.Thermal;
+        if (Marshal.ReadByte(_scratch, IgclNative.FlagCurrentLimited) != 0) r |= GpuLimitReasons.Current;
+        if (Marshal.ReadByte(_scratch, IgclNative.FlagVoltageLimited) != 0) r |= GpuLimitReasons.Voltage;
+        if (Marshal.ReadByte(_scratch, IgclNative.FlagUtilizationLimited) != 0) r |= GpuLimitReasons.LowUtilization;
+        return r;
+    }
+
+    /// <summary>한도를 다시 읽는 간격(전체 읽기 횟수). 사용자가 Arc Control 에서 바꿀 수 있지만 자주는 아니다.</summary>
+    private const int PowerLimitRefreshEvery = 30;
+
+    /// <summary>
+    /// 지속(PL1) 전력 한도(W). 전력 도메인 중 한도가 켜진 첫 도메인의 값이다. 없으면 null.
+    /// </summary>
+    /// <remarks>
+    /// 한도는 거의 변하지 않으므로 <see cref="PowerLimitRefreshEvery"/> 번에 한 번만 네이티브로 묻고
+    /// 그 사이에는 기억한 값을 준다. 텔레메트리 구조체를 덮어쓰지 않도록 별도 버퍼를 쓴다 —
+    /// 호출 순서상 플래그를 이미 읽은 뒤지만, 같은 스크래치를 쓰면 다음 수정에서 누군가 순서를 바꿀 때 조용히 깨진다.
+    /// </remarks>
+    private float? PowerLimitWatts(Device device)
+    {
+        if (device.PowerLimitAge++ % PowerLimitRefreshEvery != 0) return device.PowerLimitWatts;
+
+        device.PowerLimitWatts = null;
+        device.PowerDomains ??= EnumeratePowerDomains(device.Handle);
+
+        nint limits = Marshal.AllocHGlobal(IgclNative.PowerLimitsSize);
+        try
+        {
+            foreach (nint domain in device.PowerDomains)
+            {
+                unsafe { NativeMemory.Clear((void*)limits, IgclNative.PowerLimitsSize); }
+                Marshal.WriteInt32(limits, 0, IgclNative.PowerLimitsSize);
+                Marshal.WriteByte(limits, 4, 0);
+
+                if (IgclNative.PowerGetLimits(domain, limits) != IgclNative.Success) continue;
+
+                bool enabled = Marshal.ReadByte(limits, IgclNative.SustainedEnabled) != 0;
+                int milliwatts = Marshal.ReadInt32(limits, IgclNative.SustainedPower);
+                if (enabled && milliwatts is > 0 and <= (int)(MaxWatts * 1000))
+                {
+                    device.PowerLimitWatts = milliwatts / 1000f;
+                    break;
+                }
+            }
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(limits);
+        }
+
+        return device.PowerLimitWatts;
+    }
+
+    private static List<nint> EnumeratePowerDomains(nint adapter)
+    {
+        var result = new List<nint>();
+        uint count = 0;
+        if (IgclNative.EnumPowerDomains(adapter, ref count, 0) != IgclNative.Success || count == 0) return result;
+
+        nint buffer = Marshal.AllocHGlobal(nint.Size * (int)count);
+        try
+        {
+            if (IgclNative.EnumPowerDomains(adapter, ref count, buffer) != IgclNative.Success) return result;
+            for (int i = 0; i < count; i++) result.Add(Marshal.ReadIntPtr(buffer, i * nint.Size));
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(buffer);
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// 직전 1초 활동이 이 비율(%) 미만이면 클럭을 내지 않는다. 화면 합성만 하는 유휴 GPU 도
+    /// 1~2% 는 깨어 있으므로, 그보다 낮으면 사실상 내내 절전이었다고 본다.
+    /// </summary>
+    private const double ClockActivityFloor = 0.5;
+
+    /// <summary>
+    /// 누적 활동 시간의 기울기(%). 기준선이 없거나 카운터가 되감기면 null 이고 기준선만 새로 잡는다.
+    /// </summary>
+    private static double? ActivityPercent(ref ActivityBaseline baseline, double activity, double stamp)
+    {
+        if (double.IsNaN(activity) || double.IsNaN(stamp)) return null;
+
+        var previous = baseline;
+        baseline = new ActivityBaseline(activity, stamp, true);
+
+        double elapsed = stamp - previous.Stamp;
+        double busy = activity - previous.Activity;
+        if (!previous.Valid || elapsed <= 0 || busy < 0) return null;
+
+        return Math.Clamp(busy / elapsed * 100, 0, 100);
+    }
+
+    private record struct ActivityBaseline(double Activity, double Stamp, bool Valid);
 
     /// <summary>
     /// 전력은 직접 오지 않는다. 누적 에너지(J)와 타임스탬프(s)를 받아 두 샘플의 기울기로 구한다.
@@ -312,6 +478,99 @@ public sealed class IgclTelemetry : IVendorTelemetry
         };
     }
 
+    /// <summary>
+    /// 진단용. <c>ctl_power_telemetry_t</c> 의 항목을 이름과 함께 전부 읽는다.
+    /// 드라이버가 어떤 값을 지원하는지, 유휴와 부하에서 무엇이 움직이는지를 실측할 때 쓴다.
+    /// </summary>
+    public IReadOnlyList<(string Name, double Value)> Probe(int handle, byte? version = null)
+    {
+        var result = new List<(string, double)>();
+        if (!IsAvailable || (uint)handle >= (uint)_devices.Count) return result;
+
+        var device = _devices[handle];
+        if (version is { } forced) device.TelemetryVersion = forced;
+        uint rc;
+        while (true)
+        {
+            Clear(_scratch, IgclNative.PowerTelemetrySize);
+            Marshal.WriteInt32(_scratch, 0, IgclNative.PowerTelemetrySize);
+            Marshal.WriteByte(_scratch, 4, device.TelemetryVersion);
+
+            rc = IgclNative.PowerTelemetryGet(device.Handle, _scratch);
+            if (rc == IgclNative.Success || device.TelemetryVersion >= 2) break;
+            device.TelemetryVersion++;
+        }
+
+        result.Add(("rc", rc));
+        result.Add(("version", device.TelemetryVersion));
+        if (rc != IgclNative.Success) return result;
+
+        foreach (var (name, offset) in ProbeItems)
+            result.Add((name, ReadItem(offset)));
+
+        foreach (var (name, offset) in ProbeFlags)
+            result.Add((name, Marshal.ReadByte(_scratch, offset)));
+
+        device.PowerLimitAge = 0;
+        result.Add(("sustainedPowerLimitW", PowerLimitWatts(device) ?? double.NaN));
+        result.Add(("powerDomains", device.PowerDomains?.Count ?? 0));
+
+        // 한도가 비었을 때 원인을 가르는 원시값. 도메인마다 반환 코드와 앞 36바이트의 주요 필드.
+        nint raw = Marshal.AllocHGlobal(IgclNative.PowerLimitsSize);
+        try
+        {
+            int d = 0;
+            foreach (nint domain in device.PowerDomains ?? [])
+            {
+                unsafe { NativeMemory.Clear((void*)raw, IgclNative.PowerLimitsSize); }
+                Marshal.WriteInt32(raw, 0, IgclNative.PowerLimitsSize);
+                uint limitRc = IgclNative.PowerGetLimits(domain, raw);
+                result.Add(($"domain{d}.rc", limitRc));
+                result.Add(($"domain{d}.sustainedEnabled", Marshal.ReadByte(raw, IgclNative.SustainedEnabled)));
+                result.Add(($"domain{d}.sustainedMw", Marshal.ReadInt32(raw, IgclNative.SustainedPower)));
+                result.Add(($"domain{d}.burstEnabled", Marshal.ReadByte(raw, 20)));
+                result.Add(($"domain{d}.burstMw", Marshal.ReadInt32(raw, 24)));
+                result.Add(($"domain{d}.peakAcMw", Marshal.ReadInt32(raw, IgclNative.PeakPowerAc)));
+                unsafe { NativeMemory.Clear((void*)raw, IgclNative.PowerLimitsSize); }
+                Marshal.WriteInt32(raw, 0, 20);
+                result.Add(($"domain{d}.propsRc", IgclNative.PowerGetProperties(domain, raw)));
+                result.Add(($"domain{d}.defaultMw", Marshal.ReadInt32(raw, 8)));
+                result.Add(($"domain{d}.minMw", Marshal.ReadInt32(raw, 12)));
+                result.Add(($"domain{d}.maxMw", Marshal.ReadInt32(raw, 16)));
+                d++;
+            }
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(raw);
+        }
+
+        return result;
+    }
+
+    private static readonly (string, int)[] ProbeItems =
+    [
+        ("timeStamp", 8), ("gpuEnergyCounter", 32), ("gpuVoltage", 56), ("gpuCurrentClockFrequency", 80),
+        ("gpuCurrentTemperature", 104), ("globalActivityCounter", 128), ("renderComputeActivityCounter", 152),
+        ("mediaActivityCounter", 176), ("vramEnergyCounter", 208), ("vramVoltage", 232),
+        ("vramCurrentClockFrequency", 256), ("vramCurrentEffectiveFrequency", 280),
+        ("vramReadBandwidthCounter", 304), ("vramWriteBandwidthCounter", 328), ("vramCurrentTemperature", 352),
+        ("totalCardEnergyCounter", 384), ("gpuVrTemp", 808), ("vramVrTemp", 832), ("saVrTemp", 856),
+        ("gpuEffectiveClock", 880), ("gpuOverVoltagePercent", 904), ("gpuPowerPercent", 928),
+        ("gpuTemperaturePercent", 952), ("vramReadBandwidth", 976), ("vramWriteBandwidth", 1000),
+    ];
+
+    private static readonly (string, int)[] ProbeFlags =
+    [
+        ("gpuPowerLimited", 200), ("gpuTemperatureLimited", 201), ("gpuCurrentLimited", 202),
+        ("gpuVoltageLimited", 203), ("gpuUtilizationLimited", 204),
+        ("vramPowerLimited", 376), ("vramTemperatureLimited", 377), ("vramCurrentLimited", 378),
+        ("vramVoltageLimited", 379), ("vramUtilizationLimited", 380),
+    ];
+
+    /// <summary>진단용. 열린 어댑터 수.</summary>
+    public int DeviceCount => _devices.Count;
+
     private static unsafe void Clear(nint buffer, int length)
     {
         // 버퍼를 넘어서는 크기를 조용히 받아주면 힙이 망가진 채로 굴러간다. 여기서 끊는다.
@@ -343,7 +602,17 @@ public sealed class IgclTelemetry : IVendorTelemetry
         public byte TelemetryVersion { get; set; }
         public bool LoggedFailure { get; set; }
 
+        /// <summary>매 읽기의 활동 기준선 — 사용률용.</summary>
+        public ActivityBaseline Tick;
+
+        /// <summary>전체 읽기(1초)의 활동 기준선 — 클럭이 돌고 있었는지 판단용.</summary>
+        public ActivityBaseline Full;
+
         public double LastJoules { get; set; }
+
+        public List<nint>? PowerDomains { get; set; }
+        public float? PowerLimitWatts { get; set; }
+        public int PowerLimitAge { get; set; }
         public double LastSeconds { get; set; }
         public bool HasEnergyBaseline { get; set; }
     }

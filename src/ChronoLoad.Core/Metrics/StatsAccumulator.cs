@@ -17,6 +17,12 @@ public struct StatsAccumulator
     /// <summary>마지막 리셋 시각(UTC ticks). 경과 시간 표시에 쓴다.</summary>
     public long ResetTimestampUtcTicks;
 
+    /// <summary>
+    /// 리셋 시점의 프레임 번호(§7.4). 지금 프레임과의 차가 링 길이 안이면 구간의 표본이
+    /// 링에 다 남아 있어 분위수를 정확히 구할 수 있다. 레지스트리가 채운다.
+    /// </summary>
+    public long ResetFrame;
+
     public static StatsAccumulator Create(long nowUtcTicks)
     {
         var s = default(StatsAccumulator);

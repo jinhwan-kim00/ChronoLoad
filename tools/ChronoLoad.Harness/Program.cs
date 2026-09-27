@@ -13,6 +13,7 @@ using ChronoLoad.Sensors;
 //   --no-vendor     계층 B(NVML·IGCL·Level Zero)를 열지 않는다. PDH 만으로 동작
 //   --no-watcher    장치 착탈 감시를 끈다
 //   --power-probe   전원 상태만 관찰한다. 센서도 벤더 SDK 도 열지 않으므로 장치를 깨우지 않는다
+//   --igcl-probe    IGCL 원시 텔레메트리를 1초마다 찍는다. --igcl-version=N 으로 구조체 버전을 고정한다
 
 // dotnet run 이 인식하지 못한 옵션을 앱으로 넘기는 경우가 있어, 숫자로 읽히는 첫 인자를 쓴다.
 int seconds = 10;
@@ -47,6 +48,8 @@ if (args.Contains("--mcp"))
     var context = new ChronoLoad.Mcp.McpContext(mcpRegistry, mcpEngine)
     {
         TelemetryLayers = () => mcpGpu.TelemetryLayers,
+        EngineBreakdown = mcpGpu.EngineBreakdown,
+        LimitReasons = mcpGpu.LimitReasons,
         Processes = new ChronoLoad.Mcp.SensorProcessSource(mcpProcesses),
         SamplePeriod = mcpOptions.FastPeriod,
     };
@@ -99,6 +102,27 @@ if (args.Contains("--processes"))
     return;
 
     static string Trim(string v, int n) => v.Length <= n ? v : v[..(n - 1)] + "…";
+}
+
+// IGCL 원시값. 드라이버가 어떤 항목을 지원하는지, 유휴·부하에서 무엇이 움직이는지를 본다.
+if (args.Contains("--igcl-probe"))
+{
+    using var igcl = ChronoLoad.Sensors.Vendor.IgclTelemetry.TryCreate();
+    if (igcl is null) { Console.Error.WriteLine("IGCL 을 열 수 없다."); return; }
+
+    // 구조체 버전을 고정해 본다. 버전 1 에만 있는 항목(gpuEffectiveClock 등)을 확인할 때 쓴다.
+    byte? forcedVersion = args.FirstOrDefault(a => a.StartsWith("--igcl-version=")) is { } v
+        ? byte.Parse(v["--igcl-version=".Length..])
+        : null;
+
+    for (int i = 0; i < seconds; i++)
+    {
+        for (int d = 0; d < igcl.DeviceCount; d++)
+            Console.WriteLine($"{i,3}s [{d}] " + string.Join(" ",
+                igcl.Probe(d, forcedVersion).Where(p => !double.IsNaN(p.Value)).Select(p => $"{p.Name}={p.Value:0.###}")));
+        await Task.Delay(1000);
+    }
+    return;
 }
 
 if (args.Contains("--power-probe"))
@@ -157,8 +181,14 @@ engine.DevicesChanged += _ =>
     var current = registry.ActiveDevices.ToDictionary(d => d.Key, d => d.Info.ShortName);
 
     foreach (var (key, name) in current)
-        if (deviceKeys.Add(key))
-            Console.Error.WriteLine($"  + {Stamp()} 장치 추가: {name}");
+    {
+        if (!deviceKeys.Add(key)) continue;
+        Console.Error.WriteLine($"  + {Stamp()} 장치 추가: {name}");
+
+        // GPU 는 첫 목록을 찍은 뒤에 등록된다. 부가 정보(HAGS·벤더 ID 등)를 여기서 찍는다.
+        if (registry.Find(key) is { Info.Class: ChronoLoad.Core.Devices.DeviceClass.Gpu } gpu)
+            Console.Error.WriteLine("      " + string.Join(" · ", gpu.Info.Extra.Select(kv => $"{kv.Key}={kv.Value}")));
+    }
 
     foreach (string key in deviceKeys.Where(k => !current.ContainsKey(k)).ToArray())
     {

@@ -92,6 +92,8 @@ public partial class App : Application
         var context = new Mcp.McpContext(registry, engine)
         {
             TelemetryLayers = () => gpu.TelemetryLayers,
+            EngineBreakdown = gpu.EngineBreakdown,
+            LimitReasons = gpu.LimitReasons,
             Processes = new Mcp.SensorProcessSource(_processes),
             SamplePeriod = options.FastPeriod,
         };

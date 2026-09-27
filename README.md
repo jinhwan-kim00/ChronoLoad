@@ -98,13 +98,13 @@ claude mcp add chronoload -- <저장소>\tools\ChronoLoad.McpBridge\bin\Debug\ne
 | 툴 | 쓰임 |
 |---|---|
 | `get_system_snapshot` | CPU·메모리 + GPU·디스크·네트워크 배열. 첫 조회용 |
-| `get_gpu_status` | 어댑터별 사용률·메모리·온도·전력·클럭, VRAM 초과 여부, 센서 계층 |
+| `get_gpu_status` | 어댑터별 사용률·메모리·온도·전력·클럭, VRAM 초과 여부, 센서 계층. AI 작업이 어느 지표에 잡히는지(`aiSignals` — HAGS 가 켜진 NVIDIA 는 CUDA 가 3D 로 잡힌다), NVIDIA 메모리 컨트롤러 사용률, 전력 한도와 클럭 제한 사유(전력·온도 — 제한에 걸린 시간 비율은 `GpuThrottle*` 지표의 구간 평균). `verbose` 면 엔진 계열(3D·Compute·Copy·Video) 분해 |
 | `get_disk_status` | 디스크별 읽기·쓰기·활성 비율, 매체(SSD/HDD) |
 | `get_network_interfaces` | 인터페이스별 수신·송신. 터널은 기본 제외 |
-| `get_metric_history` | 최근 시계열. min-max 데시메이션이라 스파이크가 사라지지 않는다 |
-| `get_stats_since_reset` | 리셋 이후 평균·최소·최대·p95·표준편차 |
-| `reset_stats` | MCP 쪽 기준점만 옮긴다. 직전 구간을 반환한다 |
-| `list_processes` | CPU·메모리·GPU·GPU 메모리·디스크 I/O로 정렬 |
+| `get_metric_history` | 최근 시계열. 실측 표본만 시각과 함께 주고, 많으면 시간으로 등분해 칸마다 평균·최소·최대(스파이크는 최대에 남는다) |
+| `get_stats_since_reset` | 리셋 이후 평균·최소·최대·p50·p95·p99·표준편차. 15분 안이면 분위수가 정확값이고, 사용률은 90% 이상이었던 시간 비율도 준다 |
+| `reset_stats` | MCP 쪽 기준점만 옮긴다. 직전 구간을 반환한다(지표·장치로 좁히거나 생략 가능) |
+| `list_processes` | CPU·메모리·GPU·GPU 메모리·디스크 I/O로 정렬. GPU·디스크 정렬은 쓰지 않는 프로세스를 뺀다 |
 | `get_process_detail` | 프로세스 하나의 어댑터별·엔진별 GPU 사용률 |
 | `describe_capabilities` | 무엇을 관측할 수 있는지, 지금 샘플 주기는 어떤지 |
 

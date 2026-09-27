@@ -140,6 +140,7 @@ internal static partial class D3DKmt
     private const uint QueryAdapterAddress = 6;
     private const uint QueryAdapterType = 15;
     private const uint QueryPhysicalAdapterDeviceIds = 31;
+    private const uint QueryWddm27Caps = 70;
 
     [LibraryImport("gdi32.dll")]
     private static partial int D3DKMTEnumAdapters2(ref D3DKmtEnumAdapters2 request);
@@ -164,7 +165,8 @@ internal static partial class D3DKmt
         bool IsSoftware = false,
         uint PciBus = 0,
         uint PciDevice = 0,
-        uint PciFunction = 0)
+        uint PciFunction = 0,
+        bool? HardwareScheduling = null)
     {
         /// <summary>전용 VRAM 1 GiB 이상이면 외장으로 본다. 차트 규칙과 경고 규칙을 가르는 기준이다.</summary>
         public bool IsDiscrete => DedicatedVideoMemory >= 1L * 1024 * 1024 * 1024;
@@ -207,7 +209,8 @@ internal static partial class D3DKmt
                     adapters.Add(new Adapter(info.AdapterLuid, name,
                         segments.DedicatedVideoMemorySize, segments.SharedSystemMemorySize, vendor,
                         computeOnly, vendorEarly is null, software,
-                        address.BusNumber, address.DeviceNumber, address.FunctionNumber));
+                        address.BusNumber, address.DeviceNumber, address.FunctionNumber,
+                        QueryHardwareScheduling(info.AdapterHandle)));
                 }
                 finally
                 {
@@ -287,6 +290,17 @@ internal static partial class D3DKmt
         var ids = Query<D3DKmtQueryDeviceIds>(adapter, QueryPhysicalAdapterDeviceIds);
         return ids?.DeviceIds.VendorId is { } vendor && vendor != 0 ? vendor : null;
     }
+
+    /// <summary>
+    /// 하드웨어 가속 GPU 예약(HAGS)이 이 어댑터에서 켜져 있는가. 모르면 null.
+    /// </summary>
+    /// <remarks>
+    /// <c>D3DKMT_WDDM_2_7_CAPS</c> 의 둘째 비트(<c>HwSchEnabled</c>). 켜져 있으면 NVIDIA 드라이버가
+    /// <c>Compute_0</c>·<c>Cuda</c> 노드를 따로 보고하지 않고 <c>3d</c> 노드 하나로 합친다 —
+    /// CUDA 부하가 PDH 에서 3D 로 보이는 이유다(§5.4).
+    /// </remarks>
+    private static bool? QueryHardwareScheduling(uint adapter) =>
+        Query<uint>(adapter, QueryWddm27Caps) is { } caps ? (caps & 0b10) != 0 : null;
 
     public static uint GuessVendorFromName(string name) =>
         name.Contains("NVIDIA", StringComparison.OrdinalIgnoreCase) ? 0x10DEu

@@ -14,6 +14,9 @@ public sealed class SensorProcessSource(ProcessProvider provider) : IProcessSour
 {
     public void KeepAlive() => provider.KeepAlive();
 
+    public Task KeepAliveAsync(CancellationToken cancellationToken = default) =>
+        provider.KeepAliveAsync(cancellationToken);
+
     public DateTimeOffset? SampledAt => provider.SampledAt;
 
     public IReadOnlyList<ProcessRow> Snapshot() =>

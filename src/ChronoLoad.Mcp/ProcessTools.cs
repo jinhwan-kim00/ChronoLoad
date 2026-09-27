@@ -14,8 +14,8 @@ namespace ChronoLoad.Mcp;
 public sealed class ProcessTools(McpContext ctx)
 {
     [McpServerTool(Name = "list_processes")]
-    [Description("무엇이 자원을 쓰고 있는지. CPU·메모리·GPU·GPU 메모리·디스크 I/O 로 정렬할 수 있다.")]
-    public object ListProcesses(
+    [Description("무엇이 자원을 쓰고 있는지. CPU·메모리·GPU·GPU 메모리·디스크 I/O 로 정렬할 수 있다. gpu·gpuMemory·diskIo 정렬은 그 값이 0 인 프로세스를 뺀다. 한동안 부르지 않았으면 첫 실측까지 1초 기다린다.")]
+    public async Task<object> ListProcesses(
         [Description("정렬 기준: cpu | memory | gpu | gpuMemory | diskIo")] string sortBy = "cpu",
         [Description("이 어댑터 키의 GPU 사용만으로 정렬한다. gpu · gpuMemory 정렬에만 쓰인다.")]
         string? adapterKey = null,
@@ -24,8 +24,9 @@ public sealed class ProcessTools(McpContext ctx)
     {
         if (ctx.Processes is not { } source) return Unavailable();
 
-        source.KeepAlive();
-        var rows = source.Snapshot();
+        await source.KeepAliveAsync().ConfigureAwait(false);
+        IReadOnlyList<ProcessRow> rows = source.Snapshot();
+        int total = rows.Count;
 
         if (rows.Count == 0)
             return ChronoLoadTools.Error("collecting",
@@ -36,39 +37,69 @@ public sealed class ProcessTools(McpContext ctx)
 
         double GpuOf(ProcessRow r) => adapterKey is null
             ? r.TotalGpuPercent
-            : r.GpuByAdapter.GetValueOrDefault(adapterKey);
+            : Lookup(r.GpuByAdapter, adapterKey);
 
-        long GpuMemoryOf(ProcessRow r) => adapterKey is null
+        double GpuMemoryOf(ProcessRow r) => adapterKey is null
             ? r.TotalGpuMemoryBytes
-            : r.GpuMemoryByAdapter.GetValueOrDefault(adapterKey);
+            : Lookup(r.GpuMemoryByAdapter, adapterKey);
 
-        var sorted = sortBy.ToLowerInvariant() switch
+        // 정렬 키. null(아직 모름)은 맨 뒤로 보낸다.
+        Func<ProcessRow, double> key = sortBy.ToLowerInvariant() switch
         {
-            "memory" => rows.OrderByDescending(r => r.WorkingSetBytes),
-            "gpu" => rows.OrderByDescending(GpuOf),
-            "gpumemory" => rows.OrderByDescending(GpuMemoryOf),
-            "diskio" => rows.OrderByDescending(r => r.DiskBytesPerSecond),
-            _ => rows.OrderByDescending(r => r.CpuPercent),
+            "memory" => r => r.WorkingSetBytes,
+            "gpu" => GpuOf,
+            "gpumemory" => GpuMemoryOf,
+            "diskio" => r => r.DiskBytesPerSecond ?? -1,
+            _ => r => r.CpuPercent ?? -1,
         };
+
+        // GPU·디스크로 정렬하면서 0 인 프로세스까지 내보내면 동률이 PID 순으로 뒤따라 붙는다 —
+        // 쓰지 않는 프로세스가 "쓰는 순위"에 끼어 보인다. 그 축에서 0 인 것은 뺀다.
+        // CPU·메모리는 거의 모두가 조금씩은 쓰므로 빼지 않는다.
+        bool sparse = sortBy.ToLowerInvariant() is "gpu" or "gpumemory" or "diskio";
+        int excluded = 0;
+        if (sparse)
+        {
+            var active = rows.Where(r => key(r) > 0).ToArray();
+            excluded = rows.Count - active.Length;
+            rows = active;
+        }
+
+        // 동률은 다른 자원을 많이 쓰는 쪽을 앞에 둔다. PID 순은 아무 뜻이 없다.
+        var sorted = rows
+            .OrderByDescending(key)
+            .ThenByDescending(r => r.CpuPercent ?? -1)
+            .ThenByDescending(r => r.WorkingSetBytes);
 
         return new
         {
             header = MetricReader.Header(ctx),
             sortedBy = sortBy,
             adapterKey,
-            totalProcesses = source.Snapshot().Count,
+            totalProcesses = total,
+            // 정렬 축의 값이 0 이라 뺀 프로세스 수. gpu·gpuMemory·diskIo 정렬에서만 0 이 아니다.
+            excludedIdle = sparse ? excluded : (int?)null,
             collectedAt = source.SampledAt is { } at ? McpJsonHelpers.Iso(at) : null,
             processes = sorted.Take(Math.Clamp(limit, 1, 50)).Select(Summary).ToArray(),
         };
     }
 
+    /// <summary>에이전트가 넘긴 어댑터 키는 대소문자가 다를 수 있다. 사전의 비교자에 기대지 않는다.</summary>
+    private static double Lookup<T>(IReadOnlyDictionary<string, T> byAdapter, string adapterKey)
+        where T : struct, IConvertible
+    {
+        foreach (var (k, v) in byAdapter)
+            if (string.Equals(k, adapterKey, StringComparison.OrdinalIgnoreCase)) return v.ToDouble(null);
+        return 0;
+    }
+
     [McpServerTool(Name = "get_process_detail")]
     [Description("프로세스 하나의 상세. 어댑터별·엔진별 GPU 사용률과 경로·부모 PID 를 포함한다.")]
-    public object GetProcessDetail([Description("프로세스 ID.")] int pid)
+    public async Task<object> GetProcessDetail([Description("프로세스 ID.")] int pid)
     {
         if (ctx.Processes is not { } source) return Unavailable();
 
-        source.KeepAlive();
+        await source.KeepAliveAsync().ConfigureAwait(false);
         var row = source.Snapshot().FirstOrDefault(r => r.Pid == pid);
 
         if (row is null)
@@ -109,6 +140,7 @@ public sealed class ProcessTools(McpContext ctx)
         workingSet = ByteValue.From(r.WorkingSetBytes),
         diskBytesPerSecond = r.DiskBytesPerSecond,
         gpuPercent = Math.Round(r.TotalGpuPercent, 2),
+        // 여러 어댑터를 쓰면 gpuPercent 는 그중 최댓값이다. 어댑터별 값은 이쪽에 있다.
         gpuMemory = ByteValue.From(r.TotalGpuMemoryBytes),
         gpuByAdapter = r.GpuByAdapter.Count == 0 ? null : r.GpuByAdapter,
     };

@@ -25,7 +25,17 @@ public sealed class McpContext(MetricRegistry registry, SampleEngine engine)
     public SampleEngine Engine { get; } = engine;
 
     /// <summary>어댑터별로 어떤 센서 계층이 붙었는지. <c>describe_capabilities</c> 가 보고한다.</summary>
+    /// <remarks>키는 장치 키(<c>gpu:luid_…</c>)다. 이름으로 잡으면 같은 모델 두 장이 겹친다.</remarks>
     public Func<IReadOnlyDictionary<string, string>>? TelemetryLayers { get; init; }
+
+    /// <summary>
+    /// 어댑터의 엔진 종류(engtype)별 최근 사용률. <c>get_gpu_status(verbose)</c> 가 보고한다.
+    /// 인자는 장치 키, 모르면 null.
+    /// </summary>
+    public Func<string, IReadOnlyDictionary<string, double>?>? EngineBreakdown { get; init; }
+
+    /// <summary>어댑터의 최근 클럭 제한 사유. 인자는 장치 키, 벤더가 주지 않으면 null.</summary>
+    public Func<string, GpuLimitReasons?>? LimitReasons { get; init; }
 
     /// <summary>프로세스 목록 제공자. 없으면 프로세스 툴이 <c>unavailable</c> 을 돌려준다.</summary>
     public IProcessSource? Processes { get; init; }
@@ -37,12 +47,13 @@ public sealed class McpContext(MetricRegistry registry, SampleEngine engine)
 }
 
 /// <summary>프로세스 표 한 줄. 어댑터별 GPU 사용은 <see cref="GpuByAdapter"/> 로 분해된다.</summary>
+/// <remarks>CPU·디스크는 차분이라 직전 수집에 없던 프로세스는 null(아직 모름)이다.</remarks>
 public sealed record ProcessRow(
     int Pid,
     string Name,
-    double CpuPercent,
+    double? CpuPercent,
     long WorkingSetBytes,
-    double DiskBytesPerSecond,
+    double? DiskBytesPerSecond,
     IReadOnlyDictionary<string, double> GpuByAdapter,
     IReadOnlyDictionary<string, long> GpuMemoryByAdapter)
 {
@@ -65,6 +76,16 @@ public interface IProcessSource
 {
     /// <summary>지금 목록이 필요하다고 알린다. 수집이 꺼져 있었다면 켠다.</summary>
     void KeepAlive();
+
+    /// <summary>
+    /// <see cref="KeepAlive"/> 와 같되, 수집을 새로 켰으면 첫 실측까지 기다린다 —
+    /// 기준선만 잡힌 표는 비율이 전부 null 이라 쓸모가 없다.
+    /// </summary>
+    Task KeepAliveAsync(CancellationToken cancellationToken = default)
+    {
+        KeepAlive();
+        return Task.CompletedTask;
+    }
 
     /// <summary>마지막으로 수집한 표. 아직 한 번도 수집하지 않았으면 비어 있다.</summary>
     IReadOnlyList<ProcessRow> Snapshot();

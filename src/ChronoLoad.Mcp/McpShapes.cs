@@ -54,6 +54,10 @@ public readonly record struct DeviceRef(
     [property: JsonPropertyName("fullName")] string FullName);
 
 /// <summary>리셋 이후 구간 통계 (§10.2 <c>get_stats_since_reset</c>).</summary>
+/// <param name="QuantilesExact">
+/// true 면 분위수를 구간의 표본 전부를 정렬해 구했다. 구간이 링(15분)보다 길면 false 이고,
+/// 그때는 상대 오차 ±0.5% 스케치 근사다. 어느 쪽이든 최소~최대 범위를 벗어나지 않는다.
+/// </param>
 public sealed record StatsBlock(
     [property: JsonPropertyName("metric")] string Metric,
     [property: JsonPropertyName("deviceKey")] string DeviceKey,
@@ -64,8 +68,24 @@ public sealed record StatsBlock(
     [property: JsonPropertyName("avg")] double? Avg,
     [property: JsonPropertyName("min")] double? Min,
     [property: JsonPropertyName("max")] double? Max,
+    [property: JsonPropertyName("p50")] double? P50,
     [property: JsonPropertyName("p95")] double? P95,
-    [property: JsonPropertyName("stdDev")] double? StdDev);
+    [property: JsonPropertyName("p99")] double? P99,
+    [property: JsonPropertyName("quantilesExact")] bool? QuantilesExact,
+    [property: JsonPropertyName("stdDev")] double? StdDev)
+{
+    /// <summary>포화 문턱(%). 백분율 지표에만 있고 나머지는 생략된다.</summary>
+    [JsonPropertyName("saturationThreshold")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public double? SaturationThreshold { get; init; }
+
+    /// <summary>
+    /// 문턱 이상이었던 표본의 비율(0~1). 버스트형 부하에서 평균이 가리는 포화를 드러낸다.
+    /// </summary>
+    [JsonPropertyName("saturatedFraction")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public double? SaturatedFraction { get; init; }
+}
 
 internal static class McpJsonHelpers
 {

@@ -29,6 +29,19 @@ public enum MetricKind : byte
     GpuTemp,
     GpuPower,
     GpuClock,
+    // GPU 엔진 계열(어댑터별). GpuCompute 와 같은 정의 — 계열 안의 엔진 종류끼리는 최댓값.
+    // 뒤에 붙인다: 앞의 값을 밀면 저장된 순서에 기대는 곳이 조용히 어긋난다.
+    Gpu3D,
+    GpuCopy,
+    GpuVideo,
+    // 메모리 컨트롤러가 VRAM 을 읽고 쓴 시간 비율(NVML). LLM 디코드처럼 대역폭에 묶인 AI 부하의 지표다.
+    GpuMemBusy,
+    // 드라이버가 지금 강제하는 전력 한도(W). 전력이 여기에 붙어 있으면 클럭이 깎인다.
+    GpuPowerLimit,
+    // 클럭 제한 사유(§5.4). 제한 중이면 100, 아니면 0 — 평균이 곧 "제한에 걸려 있던 시간 비율"이다.
+    GpuThrottlePower,
+    GpuThrottleThermal,
+    GpuThrottleOther,
 }
 
 public static class MetricKindExtensions
@@ -46,6 +59,8 @@ public static class MetricKindExtensions
     public static MetricUnit Unit(this MetricKind kind) => kind switch
     {
         MetricKind.CpuTotal or MetricKind.GpuUtil or MetricKind.GpuCompute or MetricKind.DiskActive
+            or MetricKind.Gpu3D or MetricKind.GpuCopy or MetricKind.GpuVideo or MetricKind.GpuMemBusy
+            or MetricKind.GpuThrottlePower or MetricKind.GpuThrottleThermal or MetricKind.GpuThrottleOther
             => MetricUnit.Percent,
         // 네트워크는 관례상 비트/초(Mbps), 디스크는 바이트/초(MB/s)로 읽는다.
         MetricKind.NetRx or MetricKind.NetTx => MetricUnit.BitRate,
@@ -53,7 +68,7 @@ public static class MetricKindExtensions
         MetricKind.MemUsed or MetricKind.MemCommit or MetricKind.GpuDedicated or MetricKind.GpuShared
             => MetricUnit.Bytes,
         MetricKind.GpuTemp => MetricUnit.Celsius,
-        MetricKind.GpuPower => MetricUnit.Watt,
+        MetricKind.GpuPower or MetricKind.GpuPowerLimit => MetricUnit.Watt,
         MetricKind.GpuClock => MetricUnit.Megahertz,
         MetricKind.DiskLatency => MetricUnit.Milliseconds,
         _ => MetricUnit.Scalar,

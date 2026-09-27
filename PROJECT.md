@@ -2,8 +2,8 @@
 
 > GPU 워크로드 중심의 실시간 시스템 모니터. WPF 세로형 위젯 + MCP 서버.
 
-- **문서 버전**: 1.34 — 개정 이력은 [`CHANGE_LOG.md`](CHANGE_LOG.md)
-- **최초 작성**: 2026-09-23 · **최종 갱신**: 2026-09-26
+- **문서 버전**: 1.37 — 개정 이력은 [`CHANGE_LOG.md`](CHANGE_LOG.md)
+- **최초 작성**: 2026-09-23 · **최종 갱신**: 2026-09-27
 - **대상 런타임**: .NET 10 (`net10.0-windows`), Windows 10 20H2 이상 / Windows 11
 - **UX 시각 설계서**: [`docs/ux-design.html`](docs/ux-design.html) — 브라우저로 열면 라이브 목업이 동작합니다
 
@@ -289,6 +289,45 @@ public sealed record DeviceInfo(
 | 프로세스별 GPU 메모리 | `GPU Process Memory(*)\Local Usage` / `Non Local Usage` |
 
 - **사용률 집계**: 인스턴스명의 LUID로 어댑터를 분리 → `engtype`별 그룹핑 → **그룹 내 합산, 그룹 간 최댓값**. 단순 합산하면 100%를 넘는다
+- **엔진 계열 지표**: 같은 결과에서 계열별 값을 뽑아 어댑터마다 **`Gpu3D`·`GpuCompute`·`GpuCopy`·`GpuVideo`** 네 시계열로 둔다. 계열 안의 `engtype` 끼리는 최댓값이다(위 정의를 계열 단위로 옮긴 것). 이력·구간 통계가 다른 지표와 똑같이 나온다 — 병목이 어느 엔진인지는 스냅샷 한 장이 아니라 시간에 걸친 모양으로 봐야 하기 때문이다
+
+  | 계열 | `engtype` (대소문자 무시) |
+  |---|---|
+  | Compute | `compute` 를 **포함**하는 이름(`compute`, `Compute_0`, `High Priority Compute`), `cuda*`, `neural*` |
+  | 3D | `3d` 를 포함하는 이름(`3d`, `High Priority 3D`), `graphics*` |
+  | Copy | `copy*` |
+  | Video | `video*`(decode·encode·processing), `jpeg*` |
+  | (넣지 않음) | `security*`, `ofa*`, `vr`, `gsc`, 이름 없음 |
+
+  규칙은 `Core/Metrics/GpuEngineFamilies` 한 곳에 둔다.
+
+- **AI 작업이 어느 엔진에 잡히는가 — 제조사마다 다르다.** WDDM 의 엔진 종류(`DXGK_ENGINE_TYPE`)에는 3D·영상·복사·암호는 있어도 **연산이 없다.** `Compute`·`Cuda`·`Neural` 은 전부 드라이버가 `OTHER` 엔진에 붙인 이름(`DXGK_NODEMETADATA.FriendlyName`)이라 제조사·드라이버·설정마다 다르다. 같은 추론이 GPU 마다 다른 이름으로 나타난다
+
+  | 어댑터 | AI 연산이 실리는 엔진 | 함께 보는 것 | 근거 |
+  |---|---|---|---|
+  | NVIDIA · **HAGS 켜짐**(Windows 11 기본) | **`3d`** — `Compute_0`·`Cuda` 노드가 따로 보고되지 않고 3D 노드 하나로 합쳐진다. 커널 실행 시간은 NVML `GpuUtil`(SM) | `GpuMemBusy`, `GpuCopy`, 전용 메모리, 전력·클럭 | RTX 5080 실측: CUDA 필터(`bilateral_cuda`) 중 `3d` 94.9%·`copy` 2.4%, `compute` 인스턴스 없음. 하네스로 `GpuUtil` 최대 97%·`Gpu3D` 최대 97.1%·`GpuCompute` 0% |
+  | NVIDIA · HAGS 꺼짐 | `Compute_0`·`Compute_1`·`Cuda` | 위와 같음 | 공개 보고 — HAGS 를 끄면 Cuda 그래프가 돌아온다 |
+  | Intel Arc 외장 | `compute`(CCS). 커널에 따라 `3d`(렌더) | `GpuCopy`(호스트↔VRAM), 전용 메모리 | B580 엔진 목록 `3d · compute · copy · videodecode · videoprocessing · gsc` |
+  | Intel Arc 내장 | **`Neural`** 이 `compute` 자리를 대신한다. 오래된 내장은 렌더(`3d`) | 공유 메모리 | 사용자 실측(Arc 내장). NPU 의 `neural` 과 이름이 같지만 NPU 판정은 "엔진이 `neural` 뿐"이라 겹치지 않는다 |
+  | AMD | `Compute_N`, `High Priority Compute`. DirectML 은 3D 큐를 쓰기도 한다 | `GpuCopy`, 전용 메모리 | |
+  | NPU | `neural` 하나 | 공유 메모리 | |
+
+  HAGS 는 어댑터마다 `D3DKMT_WDDM_2_7_CAPS.HwSchEnabled`(`KMTQAITYPE` 70)로 읽어 부가 정보 `hardwareScheduling` 에 둔다(이 PC: RTX 5080·B580 둘 다 `true`, NPU 는 D3DKMT 미열거라 `unknown`). MCP 는 이 표를 어댑터마다 **`aiSignals`**(`primary`·`supporting`·`note`)로 준다(§10.2). 엔진 인스턴스를 보고 정하지 않는 것은, PDH 엔진 인스턴스가 그 엔진을 쓰는 프로세스가 있을 때만 나타나 유휴 때는 판단할 근거가 없기 때문이다
+
+- **`GpuMemBusy`**: NVML `utilization.memory` — 메모리 컨트롤러가 VRAM 을 읽고 쓴 시간 비율(%). `nvmlDeviceGetUtilizationRates` 한 번에 SM 사용률과 함께 오므로 **추가 호출 없이** 매 틱 받는다. `GpuUtil` 이 낮은데 이것이 높으면 연산이 아니라 VRAM 대역폭이 병목이다(LLM 디코드가 전형). 실측: CUDA 필터 부하에서 SM 99%·메모리 4~7% — 연산에 묶인 부하. NVIDIA 외에는 값이 없다(IGCL 의 VRAM 대역폭 카운터는 B580 에서 `bSupported=false`)
+
+- **전력 한도와 클럭 제한 사유**: AI 부하의 흔한 천장은 연산 유닛이 아니라 전력이다 — RTX 5080 CUDA 부하 중 전력 360 W / 한도 360 W 로 붙어 있었고 제한 사유가 `0x4`(SW 전력 상한)였다. 1초에 한 번(전체 읽기) 읽는다
+
+  | 지표 | 뜻 | NVIDIA (NVML) | Intel (IGCL) |
+  |---|---|---|---|
+  | `GpuPowerLimit` (W) | 드라이버가 지금 강제하는 한도 | `nvmlDeviceGetEnforcedPowerLimit` — 모든 제한을 반영한 값 | **없음.** `ctlPowerGetLimits` 는 성공하지만 B580 은 지속·버스트·최대 한도와 기본 TDP 가 전부 `-1`. 텔레메트리 v1 의 `gpuPowerPercent` 도 부하 중 0 에 고정 — 쓰지 않는다 |
+  | `GpuThrottlePower` (%) | 전력 계열 제한이 섰으면 100, 아니면 0 | `SwPowerCap`(0x4), `HwPowerBrakeSlowdown`(0x80) | `gpuPowerLimited`, `gpuCurrentLimited` |
+  | `GpuThrottleThermal` (%) | 온도 계열 | `SwThermalSlowdown`(0x20), `HwThermalSlowdown`(0x40) | `gpuTemperatureLimited` |
+  | `GpuThrottleOther` (%) | 그 밖의 병목 | `HwSlowdown`(0x8, 원인 비트 없이 설 때만), `BoardLimit`(0x200) | — |
+
+  **스로틀을 0/100 시계열로 두는 이유**: 1초 표본이라 구간 평균이 곧 "그 제한에 걸려 있던 시간 비율"이고, 이력·포화 비율(§7.3)이 다른 지표와 똑같이 나온다. 비트마스크를 그대로 두면 통계를 낼 수 없다. 사유 전체는 벤더 중립 `GpuLimitReasons` 로 옮겨 MCP 가 최근 값을 `limitReasons` 이름 목록과 `throttling`(병목이 하나라도 섰는가)으로 보고한다. NVML 은 `nvmlDeviceGetCurrentClocksEventReasons`(R535~)를 먼저 쓰고 없으면 같은 비트의 옛 이름 `…ThrottleReasons` 로 내려간다
+
+  **병목이 아닌 사유는 세지 않는다.** `Idle`(0x1)·IGCL `gpuUtilizationLimited` 는 할 일이 없는 것이고, NVML `Reliability`(0x400)·IGCL `gpuVoltageLimited` 는 **전압-클럭 곡선의 끝(천장)** 이다. RTX 5080 은 유휴 내내 `0x400` 이었다 — 처음에 병목으로 셌더니 18초 측정의 44% 가 "그 밖 제한"으로 나왔고 전부 유휴 구간이었다. `limitReasons` 에는 그대로 싣되 `throttling`·스로틀 지표에서는 뺀다
 - **비용**: `GPU Engine(*)` 인스턴스는 수백 개. 와일드카드 쿼리는 Slow 티어에 두고 **한 번의 결과를 전 어댑터가 나눠 쓴다**
 - 카운터명은 인덱스 기반(`PdhLookupPerfNameByIndex`)으로 해석, 실패 시 영문명
 
@@ -339,6 +378,8 @@ Intel은 iGPU와 Arc dGPU를 같은 API 계열로 다룰 수 있어 투자 대�
    `*_ALL` 그룹과 개별 인스턴스 그룹이 함께 열거되므로 **둘을 합산하면 두 배가 된다**. `*_ALL`이 있으면 그것만 쓴다.
 4. **iGPU는 UMA라 전용 VRAM이 0~512MB다.** 외장/내장 임계값(1 GiB)에 자연히 내장으로 분류되고 차트는 공유 메모리 기준으로 그려진다. **Arc dGPU는 8~16GB 전용 VRAM이라 외장으로 분류**되어 스필오버 경고 대상이 된다.
 5. **하이브리드 노트북에서는 iGPU가 디스플레이만 담당하고 연산은 dGPU가 한다.** iGPU 카드를 기본 접힘으로 두는 근거다.
+6. **사용률은 `ctlPowerTelemetryGet` 의 `globalActivityCounter` 로 매 틱 구한다.** 누적 활동 초를 타임스탬프로 나눈 기울기라 두 읽기 사이 **전 구간의 시간 가중 평균**이다 — 250ms 사이의 버스트가 빠짐없이 들어간다. PDH 엔진 와일드카드는 1초에 한 번뿐이라, 이것이 없으면 Intel 어댑터만 사용률이 1초 해상도였다. 정의도 NVML 과 같다(무엇이든 돈 시간의 비율). 온도·전력·클럭은 그대로 1초에 한 번이다
+7. **클럭은 직전 1초 활동이 0.5% 이상일 때만 낸다.** `gpuCurrentClockFrequency` 는 렌더 블록이 절전(RC6)에 들어가 있어도 마지막 요청 주파수를 돌려준다 — 실사용에서 유휴 B580 이 2850 MHz(최대)로 고정돼 보였다. 이 PC 실측: 깨어난 직후 첫 읽기가 2850 MHz·1.035 V, 이어서 400 MHz·0.74 V, QSV 인코딩 부하에서 550 → 1950 MHz. 돌고 있는 클럭이 없을 때는 값을 비운다(`null`). 0 은 측정값이 아니다. 구조체 버전 1 의 `gpuEffectiveClock` 은 B580 이 지원하지 않는다(`bSupported=false`)
 
 *계층 B′ — `D3DKMTQueryStatistics` (벤더 무관 보조)*
 어댑터 세그먼트별 메모리(로컬/논로컬)를 PDH보다 정확하게 분해한다. 특히 Intel에서 UMA를 다루는 방식이 모호할 때 교차검증용.
@@ -385,6 +426,7 @@ Intel은 iGPU와 Arc dGPU를 같은 API 계열로 다룰 수 있어 투자 대�
 - `NtQuerySystemInformation(SystemProcessInformation)` 1회로 전 프로세스 CPU/메모리/스레드/핸들
 - GPU는 `GPU Engine(pid_*)` / `GPU Process Memory(pid_*)` 파싱 후 PID 조인. **인스턴스명의 LUID로 어댑터별 분해**까지 제공
 - 기본 2초, **MCP 요청이 없으면 수집하지 않는다**(마지막 요청 후 60초 뒤 중단)
+- **멈춰 있던 수집을 켤 때는 기준선을 잡고 1초 뒤 한 번 더 수집한 다음에 답한다.** CPU·디스크는 두 수집의 차분이라 기준선만 있는 표는 비율을 모른다. 전에는 그 표를 그대로 돌려줘, 한동안 부르지 않다가 부르면 전부 0 이었다 — 에이전트는 "다 놀고 있다"로 읽었다. 직전 수집에 없던 프로세스(방금 뜬 것)의 비율은 **`null`** 이다
 
 ### 5.7 `DeviceWatcher` — 장치 변경 실시간 반영 (R17) ✅ 구현됨
 
@@ -455,8 +497,8 @@ Intel은 iGPU와 Arc dGPU를 같은 API 계열로 다룰 수 있어 투자 대�
 ### 6.1 티어 구조
 | 티어 | 주기 | 대상 | 근거 |
 |---|---|---|---|
-| Fast | **250ms** | CPU 총합, 물리 메모리, 인터페이스별 B/s, 디스크 처리량·활성시간, GPU 사용률·메모리(네이티브 경로) | PDH/NVML 호출 비용 합계 < 1ms. 사람이 "즉각"으로 느끼는 하한 ~200ms |
-| Slow | **1000ms** | GPU 엔진 PDH 와일드카드, 코어별 CPU, GPU 온도·전력·클럭, 디스크 큐·응답, 커밋 차지 | 인스턴스 열거가 비싸거나 변화가 느린 항목 |
+| Fast | **250ms** | CPU 총합, 물리 메모리, 인터페이스별 B/s, 디스크 처리량·활성시간, GPU 사용률(NVML·IGCL)·메모리 | PDH/NVML 호출 비용 합계 < 1ms. 사람이 "즉각"으로 느끼는 하한 ~200ms |
+| Slow | **1000ms** | GPU 엔진 PDH 와일드카드(엔진 계열 포함), 코어별 CPU, GPU 온도·전력·클럭, 디스크 큐·응답, 커밋 차지 | 인스턴스 열거가 비싸거나 변화가 느린 항목 |
 | Lazy | **2000ms** | 프로세스 테이블 | MCP 구독 중일 때만 |
 
 > **왜 250ms인가** — 델타 기반 카운터는 주기가 짧을수록 양자화 노이즈가 커진다. 100ms에서는 값이 튀고 500ms에서는 짧은 스파이크를 놓친다. 250ms면 60초 창에 240포인트로 차트 밀도도 적절하다. 설정에서 100/250/500/1000ms 선택 가능.
@@ -544,7 +586,11 @@ public struct StatsAccumulator
     public void Add(float v); public void Reset(long nowTicks);
 }
 ```
-- O(1) 갱신, 고정 메모리. p95는 고정 버킷 히스토그램으로 근사
+- O(1) 갱신, 고정 메모리
+- **분위수(p50·p95·p99)는 두 경로다.** 리셋 이후 프레임이 링 길이(15분) 안이면 링에 그 구간의 실측 표본이 전부 남아 있으므로 **정렬해서 정확히** 구한다(최근접 순위). 넘치면 **상대 오차 ±0.5% 로그 버킷 스케치**(DDSketch 방식)로 근사한다. 어느 쪽이든 답은 관측된 최솟값~최댓값 안으로 자르고, 양 끝 순위는 버킷이 아니라 실제 최솟값·최댓값이다. 어느 경로였는지는 MCP 응답의 `quantilesExact` 가 말한다
+  - 리셋 시점의 프레임 번호를 `StatsAccumulator.ResetFrame` 에 둔다. 링에서 떠낸 실측 표본 수가 누산기의 `Count` 와 다르면 정확하다고 주장하지 않고 스케치로 돌아간다
+  - **고정 칸 히스토그램을 쓰지 않는 이유**: 바이트 계열을 1 B~16 TB 64칸으로 나누면 칸 하나가 ×1.62 배라 14.6~16 GB 가 12.35 GB 로 답해졌고, 전력을 0~1000 W 64칸으로 나누면 칸 폭 15.9 W 라 유휴 22.5 W 의 p95 가 15.87 W(최소보다 작다)로 나왔다. 서로 다른 지표가 같은 칸 경계에 떨어져 같은 숫자(1097631034)를 내기도 했다. 단위마다 범위를 맞추는 한 되풀이되는 문제다. 로그 스케치는 값의 크기와 무관하게 상대 오차를 보장하고, 메모리는 실제로 관측된 값의 폭에만 비례한다
+- **포화 비율**: 백분율 지표는 문턱(기본 90%) 이상이었던 표본의 비율을 함께 낸다. 버스트형 부하에서는 평균이 포화를 가린다 — 평균 62% 인데 100% 구간이 반복되는 경우를 이 숫자가 드러낸다
 - **리셋 의미론**: 통계만 초기화하고 차트 히스토리는 유지, 리셋 시점에 수직 마커선. 전역 리셋은 **접힌 카드와 표시하지 않는 지표까지 전부** 초기화한다
 
 ---
@@ -1568,15 +1614,15 @@ WPF 의 `Microsoft.Win32.SaveFileDialog` 는 속을 셸의 `IFileSaveDialog` 로
 | 툴 | 입력 | 출력 요약 |
 |---|---|---|
 | `get_system_snapshot` | — | CPU/메모리 + **`gpus[]`, `disks[]`, `networks[]` 배열** + 호스트 정보 |
-| `get_gpu_status` | `adapterIndex?` | 생략 시 전 어댑터. 모델명, **제조사**, 외장/내장, 사용률(엔진 그룹 분해), 전용/공유 메모리, 온도, 전력, 클럭, 드라이버, `vramExceeded`, **활성 센서 계층** |
+| `get_gpu_status` | `adapterKey?`, `adapterIndex?`, `verbose?` | 생략 시 전 어댑터. 모델명, **제조사**, 외장/내장, 사용률, **`memoryBusyPercent`**(NVML), **`aiSignals`**(AI 작업이 실리는 지표, §5.4), **`powerLimitWatts`·`powerLimitPercent`**, **`throttling`·`limitReasons`**(클럭 제한 사유, §5.4), 전용/공유 메모리, 온도, 전력, 클럭, `vramExceeded`, **활성 센서 계층**. `verbose` 면 `engines`(3D·Compute·Copy·Video 계열, 시계열과 같은 값)와 `engineTypes`(`engtype` 별 원값) |
 | `get_disk_status` | `diskIndex?` | 읽기/쓰기 B/s, 활성 %, 큐, 응답 ms, **매체(SSD/HDD)**, 버스, 모델·용량 |
 | `get_network_interfaces` | `includeTunnels?` | 인터페이스별 이름/**종류**/링크 속도/RX·TX B/s/누적. Wi-Fi는 SSID·신호·대역. **터널은 기본 제외**이며 포함 시 `countedTwiceOn` 필드로 하위 인터페이스를 명시 |
-| `get_metric_history` | `metric`, `deviceKey?`, `windowSeconds`(≤900), `maxPoints`(≤500) | min-max 데시메이션 시계열 |
-| `get_stats_since_reset` | `metric?`, `deviceKey?` | `{ resetAt, elapsedSeconds, sampleCount, avg, min, max, p95, stdDev }` |
-| `reset_stats` | `confirm: true` | 리셋 후 **직전 구간 통계를 반환** |
-| `list_processes` | `sortBy`(cpu\|memory\|gpu\|gpuMemory\|diskIo), `adapterIndex?`, `limit`(≤50), `nameFilter?` | PID, 이름, CPU%, 워킹셋, 어댑터별 GPU%·메모리, 디스크 I/O |
+| `get_metric_history` | `metric`, `deviceKey?`, `windowSeconds`(≤900), `maxPoints`(≤500) | **실측 표본만**, 시각과 함께. `startAt` + `offsetsMs[i]` 가 점의 시각이고 `measuredPeriodMs` 가 그 지표의 실제 갱신 주기다. 표본이 `maxPoints` 이하면 `raw`(점 하나 = 실측 하나), 넘치면 `bucketed` — 시간을 **정확히 `maxPoints` 칸으로 등분**해 칸마다 `avg`·`min`·`max`·`samples`. 빈 칸은 `null` |
+| `get_stats_since_reset` | `metric?`, `deviceKey?`, `saturationThreshold?`(기본 90) | `{ resetAt, elapsedSeconds, sampleCount, avg, min, max, p50, p95, p99, quantilesExact, stdDev }`. 백분율 지표는 `saturationThreshold`·`saturatedFraction` 을 더한다(§7.3) |
+| `reset_stats` | `confirm: true`, `includePrevious?`, `metric?`, `deviceKey?` | 리셋 후 **직전 구간 통계를 반환**. 표본이 없던 지표는 빼고 그 수를 `omittedEmpty` 로. 거르는 인자는 **돌려받을 범위만** 좁힌다 — 리셋은 늘 전 지표에 걸린다. 지표마다 기준점이 다르면 구간끼리 비교할 수 없다 |
+| `list_processes` | `sortBy`(cpu\|memory\|gpu\|gpuMemory\|diskIo), `adapterKey?`, `limit`(≤50), `nameFilter?` | PID, 이름, CPU%, 워킹셋, 어댑터별 GPU%·메모리, 디스크 I/O. `gpu`·`gpuMemory`·`diskIo` 정렬은 **그 값이 0 인 프로세스를 빼고** 수를 `excludedIdle` 로 — 동률 0 이 PID 순으로 뒤따라 붙으면 쓰지 않는 프로세스가 순위에 끼어 보인다. 동률은 CPU → 워킹셋 순. 어댑터 키는 대소문자를 가리지 않는다 |
 | `get_process_detail` | `pid` | 위 + 경로, 명령줄(권한 허용 시), 부모 PID, 어댑터별·엔진별 GPU 사용률 |
-| `describe_capabilities` | — | 어댑터별 센서 계층(NVML/ADLX/IGCL/LevelZero/PDH), 디스크·인터페이스 목록, 샘플 주기, 버퍼 용량, **`devicesRevision`** |
+| `describe_capabilities` | — | 어댑터별 센서 계층(NVML/ADLX/IGCL/LevelZero/PDH), 디스크·인터페이스 목록, 샘플 주기, 버퍼 용량, **`devicesRevision`**, GPU·NPU 마다 `aiSignals`. 계층 표의 키는 **장치 키**다 — 이름으로 잡으면 같은 모델 두 장이 겹친다. 절전이라 벤더 경로를 아직 열지 않은 어댑터는 `PDH (standby)` 로 적는다(§6.3). 이유가 없으면 같은 장치가 한 번은 PDH, 깨어난 뒤에는 IGCL 로 보여 두 툴이 서로 다른 말을 하는 것처럼 읽힌다 |
 
 ### 10.2-1 브리지의 실패 설계
 
@@ -2050,9 +2096,24 @@ M7 안에서 처리하기로 **이미 정해진** 항목들이다. §17 「구�
 | 24시간 소크 재실행 | §12 | 실측 잔차로 계산하면 10MB/24h 를 가리는 데 **약 26시간**이 필요하다. 4h19m 에서 윈도우 업데이트 재부팅으로 끊겼으므로, 돌리기 전에 활성 시간을 확인한다 |
 | 원격 데스크톱 잔여 2건 | §13 | 물리 모니터가 없을 때 외장 GPU 가 `대기` 로 표시되는지, 원격 세션의 해상도·배율에서 창 위치 복원(§11)이 어긋나지 않는지 |
 
-그 밖의 검증 항목 — 배터리 절전 감지, IGCL 클럭, 듀티 사이클 대표값, 소크 판정 지표,
+그 밖의 검증 항목 — 배터리 절전 감지, IGCL 클럭(내장), 듀티 사이클 대표값, 소크 판정 지표,
 배포본 커밋 메모리 104MB, iGPU 전력 표기 — 은 **§17 의 표**에 있다. 실측 결과에 따라 결론이
 갈리는 것들이라 이 절로 옮기지 않는다.
+
+### 15.4 요청 — 실사용 피드백에서 나온 기능
+
+2026-09-27 음성 인식 서비스(`RSttStreamerOV`) 부하 분석에 MCP 를 붙여 본 평가에서 나왔다.
+같은 평가의 버그 여덟 건과 엔진 계열 시계열·포화 비율은 1.35 에서 반영했고, 남은 것이 이것이다.
+**아직 설계하지 않았다** — 설계가 정해지면 §15.1 로 올리거나 여기서 지운다.
+
+| 요청 | 분석 가치 | 메모 |
+|---|---|---|
+| 구간 마커 `mark(label)` + `get_stats(from, to)` / `compare_segments` | 높음 | 리셋을 순서대로 걸지 않고도 사후에 여러 구간을 표 하나로 비교. 링(15분) 안이면 §7.4 시간 축과 §7.3 정확 경로로 바로 된다 |
+| 프로세스 시계열 `watch_process(pid)` | 높음 | 특정 PID 의 GPU·엔진·CPU·메모리를 주기적으로 기록. 지금 프로세스 수집은 2초 Lazy 티어라 250ms 로 올리면 비용(§12)을 다시 재야 한다 |
+| 구간 히스토그램 | 중간 | 포화 비율은 1.35 에서 넣었다. 분포 모양 전체가 필요하면 스케치(§7.3)에서 뽑을 수 있다 |
+| PCIe 송수신 처리량 | 중간 | NVML `nvmlDeviceGetPcieThroughput`(송·수신 KB/s). 호스트↔VRAM 전송이 병목인지 가른다 — 지금은 `GpuCopy` 엔진 사용률로 간접적으로만 보인다. 전력 한도·클럭 제한 사유는 1.37 에서 넣었다(§5.4) |
+| 프로세스 트리·이름 단위 합산 | 낮음 | `dotnet` → `RSttStreamerOV.exe` 같은 구조. 부모 PID 는 이미 수집한다 |
+| 프로세스 표 CSV 내보내기 | 낮음 | |
 
 ---
 
@@ -2179,7 +2240,7 @@ M7 안에서 처리하기로 **이미 정해진** 항목들이다. §17 「구�
 | 펼친 카드 최소 높이 118dip이 적정한지 | M4 | 실제 차트에서 형태 인지 가능 여부 |
 | 장치 제거 후 통계 보관 60초 | M5 | Wi-Fi·eGPU 착탈 실측 지연 |
 | **배터리 절전을 무엇으로 감지할지** | M7 | Windows 11 24H2+ 의 "항상 절전 모드 사용"은 효과가 적용되는데도 Win32·WinRT 상태 API 가 둘 다 꺼짐으로 답한다(§12 실측). 임계값 자동 발동에서는 서는지부터 확인한다 |
-| **IGCL 클럭이 현재값인지 최대값인지** | M7 | 내장 Arc 130V 에서 부하와 무관하게 1850 MHz 고정(§12). GPU 부하를 걸고 Level Zero `zesFrequencyGetState` 와 대조 |
+| **IGCL 클럭이 현재값인지 최대값인지** | M7 | 외장 B580 에서는 **현재(요청) 주파수**로 확인 — 부하에 따라 400~1950 MHz 로 움직이되, 렌더 블록이 절전일 때 마지막 요청값(최대 2850 MHz)이 남는다. 활동 0.5% 미만이면 비우는 것으로 처리했다(§5.4 Intel 주의점 7). 내장 Arc 130V 의 1850 MHz 고정(§12)이 같은 현상인지는 그 기기에서 부하를 걸어 확인해야 한다 |
 | **듀티 사이클을 무엇으로 재는지** | M7 | 같은 기기에서 순간 관측 1.47%, 4.3시간 적분 0.632% — 두 배 넘게 벌어진다(§12). 목표와 견줄 대표값을 먼저 정해야 "1% 를 넘는지"를 물을 수 있다 |
 | **듀티 사이클 목표를 코어 수에 묶을지** | M7 | 벤더 계층을 떼도 순간 관측이 1.20% 다(§12). 코어별 와일드카드가 코어 수에 비례해 늘어나므로 고정 1% 가 코어 수와 무관한 것이 맞는지부터 본다 |
 | **소크 판정을 프라이빗으로 옮길지** | M7 | `tools/soak.py` 가 워킹셋으로 판정하는데 OS 트림과 4분 주기 톱니에 지배된다(σ 19MB). 프라이빗은 같은 실행에서 σ 5.4MB(§12) |

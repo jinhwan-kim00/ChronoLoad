@@ -85,15 +85,13 @@ public sealed class MetricRegistry
     private readonly Dictionary<string, DeviceHandle> _devices = [];
     private readonly Dictionary<MetricId, int> _slotByMetric = [];
 
-    // 채널 슬롯은 MetricId 로 찾을 수 없다. 분위수 버킷 배치를 고를 때 종류가 필요하므로
-    // 여기 따로 적어둔다 — 없으면 기본값(0)으로 떨어져 사용률과 바이트가 같은 눈금을 쓰게 된다.
-    private readonly Dictionary<int, MetricKind> _channelKinds = [];
     // 통계는 스코프마다 한 벌씩. 시계열은 공유하고 "언제부터 세는가"만 나뉜다.
     private readonly StatsAccumulator[][] _stats =
         [new StatsAccumulator[16], new StatsAccumulator[16]];
 
-    // 분위수는 평균·표준편차와 달리 누적식으로 계산할 수 없다. 표본을 다 들고 있을 수도 없으므로
-    // 고정 버킷 히스토그램으로 근사한다 — 구간이 24시간이 되어도 비용과 메모리가 늘지 않는다.
+    // 분위수는 평균·표준편차와 달리 누적식으로 계산할 수 없다. 구간이 링 안에 다 들어 있으면
+    // 링의 표본을 직접 정렬하고(정확), 넘치면 상대 오차 스케치로 근사한다 — 구간이 24시간이 되어도
+    // 비용과 메모리가 늘지 않는다.
     private readonly List<PercentileTracker?>[] _percentiles = [[], []];
     private int _revision;
 
@@ -203,11 +201,7 @@ public sealed class MetricRegistry
             foreach (int old in device.Channels) ReleaseSlot(old);
 
             var slots = new int[count];
-            for (int i = 0; i < count; i++)
-            {
-                slots[i] = AllocateSlot();
-                _channelKinds[slots[i]] = kind;
-            }
+            for (int i = 0; i < count; i++) slots[i] = AllocateSlot();
 
             device.SetChannels(slots);
 
@@ -283,25 +277,107 @@ public sealed class MetricRegistry
     /// MCP 경로는 <see cref="StatsScope.Mcp"/>를 <b>명시적으로</b> 넘겨야 한다.
     /// </summary>
     /// <summary>
-    /// 리셋 이후 구간의 분위수. 표본이 없으면 NaN.
+    /// 리셋 이후 구간의 분위수 하나. 표본이 없으면 NaN.
     /// </summary>
-    /// <remarks>
-    /// 히스토그램 근사라 버킷 해상도만큼의 오차가 있다(백분율 계열 ±0.5%p).
-    /// 24시간을 누적해도 메모리가 고정이라는 성질과의 교환이다.
-    /// </remarks>
+    /// <remarks>여러 분위수를 함께 볼 때는 <see cref="Summarize"/> 가 한 번에 구한다.</remarks>
     public double Quantile(int slot, double q, StatsScope scope = StatsScope.Ui)
     {
-        lock (_gate)
-        {
-            var tracker = PercentileOf(slot, (int)scope);
-            return tracker is null || tracker.Count == 0 ? double.NaN : tracker.Quantile(q);
-        }
+        var summary = Summarize(slot, scope, [q]);
+        return summary.Quantiles.Length == 0 ? double.NaN : summary.Quantiles[0];
     }
 
     /// <summary>
-    /// 슬롯의 분위수 추적기. 지표 단위에 맞는 버킷 배치를 골라 처음 쓸 때 만든다 —
-    /// 사용률(0~100)과 바이트(수십 GiB)를 같은 눈금으로 재면 둘 다 쓸모없어진다.
+    /// 리셋 이후 구간의 분위수와 문턱 이상 비율.
     /// </summary>
+    /// <param name="quantiles">구할 분위수(0~1). 최근접 순위 정의다.</param>
+    /// <param name="threshold">이 값 이상이었던 표본의 비율을 함께 구한다. null 이면 구하지 않는다.</param>
+    /// <remarks>
+    /// <para>
+    /// <b>구간이 링 안에 다 들어 있으면 정확하다.</b> 리셋 이후 프레임이 링 길이(기본 15분)를
+    /// 넘지 않았다면 링에 그 구간의 실측 표본이 전부 남아 있으므로 정렬해서 읽는다.
+    /// "유휴 → 리셋 → 부하 → 통계" 처럼 몇 분 단위로 재는 흐름은 전부 여기로 온다.
+    /// </para>
+    /// <para>
+    /// 넘치면 스케치로 근사한다(상대 오차 ±<see cref="PercentileTracker.RelativeAccuracy"/>, 관측 범위 안으로 자름).
+    /// 어느 쪽이었는지는 <see cref="IntervalSummary.Exact"/> 로 알린다.
+    /// </para>
+    /// </remarks>
+    public IntervalSummary Summarize(int slot, StatsScope scope, ReadOnlySpan<double> quantiles, double? threshold = null)
+    {
+        float[]? values = null;
+        bool[]? measured = null;
+        long expected;
+        var sketchQuantiles = new double[quantiles.Length];
+        double sketchFraction = double.NaN;
+
+        lock (_gate)
+        {
+            var channel = _stats[(int)scope];
+            if ((uint)slot >= (uint)_series.Count || _series[slot] is not { } series ||
+                (uint)slot >= (uint)channel.Length || channel[slot].Count == 0)
+                return IntervalSummary.Empty(quantiles.Length);
+
+            expected = channel[slot].Count;
+            long span = _frames - channel[slot].ResetFrame;
+
+            if (span > 0 && span <= series.Count)
+            {
+                // 값만 락 안에서 떠낸다. 정렬은 락 밖에서 — 샘플 스레드를 붙잡지 않는다.
+                values = new float[span];
+                measured = new bool[span];
+                series.CopyLatest(values, measured);
+            }
+            else
+            {
+                var tracker = PercentileOf(slot, (int)scope);
+                for (int i = 0; i < quantiles.Length; i++)
+                    sketchQuantiles[i] = tracker?.Quantile(quantiles[i]) ?? double.NaN;
+                if (threshold is { } t) sketchFraction = tracker?.FractionAtOrAbove(t) ?? double.NaN;
+            }
+        }
+
+        if (values is not null)
+        {
+            var samples = new List<float>(values.Length);
+            for (int i = 0; i < values.Length; i++)
+                if (measured![i] && float.IsFinite(values[i])) samples.Add(values[i]);
+
+            // 통계 누산기와 표본 수가 맞아야 같은 구간이다. 어긋나면(리셋 직후의 경계 등)
+            // 정확하다고 주장하지 않고 스케치로 돌아간다.
+            if (samples.Count == expected)
+            {
+                samples.Sort();
+                var exact = new double[quantiles.Length];
+                for (int i = 0; i < quantiles.Length; i++)
+                {
+                    long rank = Math.Max(1, (long)Math.Ceiling(Math.Clamp(quantiles[i], 0, 1) * samples.Count));
+                    exact[i] = samples[(int)rank - 1];
+                }
+
+                double fraction = double.NaN;
+                if (threshold is { } t)
+                {
+                    int above = 0;
+                    foreach (float v in samples) if (v >= t) above++;
+                    fraction = (double)above / samples.Count;
+                }
+
+                return new IntervalSummary(exact, fraction, Exact: true);
+            }
+
+            lock (_gate)
+            {
+                var tracker = PercentileOf(slot, (int)scope);
+                for (int i = 0; i < quantiles.Length; i++)
+                    sketchQuantiles[i] = tracker?.Quantile(quantiles[i]) ?? double.NaN;
+                if (threshold is { } t) sketchFraction = tracker?.FractionAtOrAbove(t) ?? double.NaN;
+            }
+        }
+
+        return new IntervalSummary(sketchQuantiles, sketchFraction, Exact: false);
+    }
+
+    /// <summary>슬롯의 분위수 스케치. 처음 쓸 때 만든다.</summary>
     private PercentileTracker? PercentileOf(int slot, int scope)
     {
         var channel = _percentiles[scope];
@@ -310,25 +386,7 @@ public sealed class MetricRegistry
         if (channel[slot] is { } existing) return existing;
         if (_series[slot] is null) return null;
 
-        // 채널 슬롯은 MetricId 에 없으므로 먼저 본다. 이 순서가 뒤바뀌면 조회가 기본값(0)으로
-        // 떨어져 코어 사용률이 바이트 눈금을 쓰게 된다 — 값은 나오는데 분위수만 조용히 틀린다.
-        var kind = _channelKinds.TryGetValue(slot, out var channelKind)
-            ? channelKind
-            : _slotByMetric.FirstOrDefault(p => p.Value == slot).Key.Kind;
-
-        var tracker = kind.Unit() switch
-        {
-            MetricUnit.Percent => PercentileTracker.ForPercent(),
-            MetricUnit.Bytes or MetricUnit.ByteRate or MetricUnit.BitRate => PercentileTracker.ForBytes(),
-            MetricUnit.Celsius => PercentileTracker.ForRange(0, 150),
-            MetricUnit.Watt => PercentileTracker.ForRange(0, 1000),
-            MetricUnit.Megahertz => PercentileTracker.ForRange(0, 10_000),
-            MetricUnit.Milliseconds => PercentileTracker.ForRange(0, 1000),
-            _ => PercentileTracker.ForRange(0, 1_000_000),
-        };
-
-        channel[slot] = tracker;
-        return tracker;
+        return channel[slot] = new PercentileTracker();
     }
 
     public StatsAccumulator StatsSnapshot(int slot, StatsScope scope = StatsScope.Ui)
@@ -353,6 +411,7 @@ public sealed class MetricRegistry
                 if (_series[i] is not null)
                 {
                     channel[i].Reset(nowUtcTicks);
+                    channel[i].ResetFrame = _frames;
                     PercentileOf(i, (int)scope)?.Reset();
                 }
         }
@@ -366,6 +425,7 @@ public sealed class MetricRegistry
             if ((uint)slot >= (uint)channel.Length) return;
 
             channel[slot].Reset(nowUtcTicks);
+            channel[slot].ResetFrame = _frames;
             PercentileOf(slot, (int)scope)?.Reset();
         }
     }
@@ -561,7 +621,6 @@ public sealed class MetricRegistry
             if (slot < _percentiles[scope].Count) _percentiles[scope][slot] = null;
         }
 
-        _channelKinds.Remove(slot);
         _freeSlots.Add(slot);
     }
 
@@ -591,6 +650,7 @@ public sealed class MetricRegistry
             }
 
             _stats[scope][slot] = StatsAccumulator.Create(now);
+            _stats[scope][slot].ResetFrame = _frames;
         }
 
         return slot;

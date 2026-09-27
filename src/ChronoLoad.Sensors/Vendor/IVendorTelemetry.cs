@@ -10,6 +10,15 @@ namespace ChronoLoad.Sensors.Vendor;
 public struct VendorSample
 {
     public float UtilPercent;
+
+    /// <summary>메모리 컨트롤러가 바빴던 시간 비율(%). NVML 만 준다.</summary>
+    public float MemBusyPercent;
+
+    /// <summary>드라이버가 강제하는 전력 한도(W). 전체 읽기에서만 채운다.</summary>
+    public float PowerLimitWatts;
+
+    /// <summary>클럭 제한 사유. 벤더가 주지 않으면 null. 전체 읽기에서만 채운다.</summary>
+    public ChronoLoad.Core.Metrics.GpuLimitReasons? LimitReasons;
     public float MemoryUsedBytes;
     public float MemoryTotalBytes;
     public float TemperatureCelsius;
@@ -19,6 +28,9 @@ public struct VendorSample
     public static VendorSample Empty => new()
     {
         UtilPercent = float.NaN,
+        MemBusyPercent = float.NaN,
+        PowerLimitWatts = float.NaN,
+        LimitReasons = null,
         MemoryUsedBytes = float.NaN,
         MemoryTotalBytes = float.NaN,
         TemperatureCelsius = float.NaN,

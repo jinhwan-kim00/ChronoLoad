@@ -25,7 +25,7 @@ public class McpToolTests
 
         var ctx = new McpContext(registry, engine)
         {
-            TelemetryLayers = () => new Dictionary<string, string> { ["RTX 9999"] = "NVML" },
+            TelemetryLayers = () => new Dictionary<string, string> { ["gpu:luid_1"] = "NVML" },
             SamplePeriod = TimeSpan.FromMilliseconds(250),
         };
 
@@ -114,33 +114,92 @@ public class McpToolTests
         Assert.Equal(2, registry.StatsSnapshot(slot, StatsScope.Ui).Count);
     }
 
+    /// <summary>250ms 간격 시각을 붙여 한 프레임을 민다. 시간 축이 있어야 이력의 시각을 검증할 수 있다.</summary>
+    private static readonly long T0 = new DateTime(2026, 9, 27, 7, 0, 0, DateTimeKind.Utc).Ticks;
+
+    private static void PushAt(MetricRegistry registry, int frame, float[] values, bool[]? measured = null) =>
+        registry.CommitAll(values, measured ?? [], T0 + frame * TimeSpan.TicksPerMillisecond * 250);
+
+    private static double?[] Doubles(JsonElement array) =>
+        array.EnumerateArray().Select(v => v.ValueKind == JsonValueKind.Null ? (double?)null : v.GetDouble()).ToArray();
+
     [Fact]
-    public void History_keeps_the_spike_when_it_decimates()
+    public void History_keeps_the_spike_when_it_buckets()
     {
         var (ctx, registry, gpu) = Build();
         int slot = gpu.SlotOf(MetricKind.GpuUtil);
 
         // 평평한 구간 한가운데 스파이크 하나. 평균으로 줄이면 사라지는 모양이다.
         for (int i = 0; i < 120; i++)
-            registry.PushFrame([0f, i == 60 ? 100f : 5f, 0f, 0f]);
+            PushAt(registry, i, [0f, i == 60 ? 100f : 5f, 0f, 0f]);
 
         var result = Json(new ChronoLoadTools(ctx).GetMetricHistory(
             "GpuUtil", deviceKey: gpu.Key, windowSeconds: 60, maxPoints: 10));
 
-        var values = result.GetProperty("values").EnumerateArray().Select(v => v.GetDouble()).ToArray();
-
-        Assert.True(values.Length <= 10);
-        Assert.Contains(values, v => v >= 99);      // 스파이크가 살아남아야 한다
+        Assert.Equal("bucketed", result.GetProperty("mode").GetString());
+        Assert.Contains(Doubles(result.GetProperty("max")), v => v >= 99);   // 스파이크가 살아남아야 한다
         Assert.Equal("percent", result.GetProperty("unit").GetString());
         Assert.Equal(slot, gpu.SlotOf(MetricKind.GpuUtil));
     }
 
+    /// <summary>
+    /// 실사용 보고: 요청한 점 수와 돌려받은 점 수가 달랐다. min-max 데시메이션은 칸당 0~2점을 냈다.
+    /// </summary>
     [Fact]
-    public void History_reports_never_measured_samples_as_null_instead_of_failing()
+    public void History_returns_exactly_the_requested_number_of_points_when_it_buckets()
+    {
+        var (ctx, registry, gpu) = Build();
+        for (int i = 0; i < 200; i++) PushAt(registry, i, [0f, i % 7, 0f, 0f]);
+
+        var result = Json(new ChronoLoadTools(ctx).GetMetricHistory(
+            "GpuUtil", deviceKey: gpu.Key, windowSeconds: 60, maxPoints: 37));
+
+        Assert.Equal(37, result.GetProperty("pointCount").GetInt32());
+        foreach (string field in (string[])["offsetsMs", "avg", "min", "max", "samples"])
+            Assert.Equal(37, result.GetProperty(field).GetArrayLength());
+
+        // 칸 폭이 일정하고, 칸의 표본 수를 모두 더하면 실측 표본 수다.
+        var offsets = result.GetProperty("offsetsMs").EnumerateArray().Select(v => v.GetInt64()).ToArray();
+        double width = result.GetProperty("bucketMs").GetDouble();
+        Assert.All(offsets.Zip(offsets.Skip(1)), p => Assert.InRange(p.Second - p.First, width - 1, width + 1));
+        Assert.Equal(result.GetProperty("measuredSamples").GetInt32(),
+            result.GetProperty("samples").EnumerateArray().Sum(v => v.GetInt32()));
+    }
+
+    /// <summary>
+    /// 실사용 보고: 250ms 주기라고 적혀 있는데 1초에 한 번 읽는 지표는 같은 값이 네 번씩 나왔다.
+    /// 유지된 칸(실측 아님)은 버리고, 시각을 붙여 실제 주기가 드러나게 한다.
+    /// </summary>
+    [Fact]
+    public void History_drops_held_samples_and_reports_the_real_period()
+    {
+        var (ctx, registry, gpu) = Build();
+
+        // 온도는 4틱에 한 번만 실측이다(Slow 티어). 나머지 세 칸은 직전 값을 유지한 것이다.
+        for (int i = 0; i < 40; i++)
+            PushAt(registry, i, [0f, 5f, 0f, 50f + i], [true, true, true, i % 4 == 0]);
+
+        var result = Json(new ChronoLoadTools(ctx).GetMetricHistory(
+            "GpuTemp", deviceKey: gpu.Key, windowSeconds: 60, maxPoints: 200));
+
+        Assert.Equal("raw", result.GetProperty("mode").GetString());
+        Assert.Equal(10, result.GetProperty("pointCount").GetInt32());
+        Assert.Equal(1000, result.GetProperty("measuredPeriodMs").GetDouble());
+
+        var offsets = result.GetProperty("offsetsMs").EnumerateArray().Select(v => v.GetInt64()).ToArray();
+        Assert.Equal([0L, 1000, 2000, 3000], offsets[..4]);
+        Assert.Equal([50.0, 54, 58, 62], Doubles(result.GetProperty("avg"))[..4].Select(v => v!.Value));
+
+        // 첫 점의 시각이 절대 시각으로 주어진다.
+        var start = DateTimeOffset.Parse(result.GetProperty("startAt").GetString()!);
+        Assert.Equal(new DateTimeOffset(T0, TimeSpan.Zero), start.ToUniversalTime());
+    }
+
+    [Fact]
+    public void History_of_a_metric_that_never_reported_is_empty_rather_than_zero()
     {
         // 슬롯은 등록됐지만 값이 한 번도 들어오지 않는 지표가 있다 — PDH 만 붙은 어댑터의 온도,
-        // 온도 센서를 0개로 돌려주는 내장 GPU 가 그렇다. 시리즈에는 NaN 이 쌓이는데
-        // JSON 에는 NaN 을 쓸 수 없어서, 툴 호출이 통째로 예외로 끝나고 있었다.
+        // 온도 센서를 0개로 돌려주는 내장 GPU 가 그렇다. 0 으로 채우면 "0 °C" 로 읽힌다.
         var (ctx, registry, gpu) = Build();
 
         for (int i = 0; i < 120; i++) PushWithMissingTemperature(registry, 5f);
@@ -148,11 +207,26 @@ public class McpToolTests
         var result = Json(new ChronoLoadTools(ctx).GetMetricHistory(
             "GpuTemp", deviceKey: gpu.Key, windowSeconds: 30, maxPoints: 8));
 
-        var values = result.GetProperty("values").EnumerateArray().ToArray();
-
-        Assert.NotEmpty(values);
-        Assert.All(values, v => Assert.Equal(JsonValueKind.Null, v.ValueKind));   // 0 이 아니라 null 이다
+        Assert.Equal(0, result.GetProperty("pointCount").GetInt32());
+        Assert.Equal(JsonValueKind.Null, result.GetProperty("startAt").ValueKind);
         Assert.Equal("celsius", result.GetProperty("unit").GetString());
+    }
+
+    [Fact]
+    public void Empty_buckets_are_null_not_zero()
+    {
+        var (ctx, registry, gpu) = Build();
+
+        // 앞 절반만 값이 있고 뒤 절반은 센서가 끊겼다.
+        for (int i = 0; i < 40; i++) PushAt(registry, i, [0f, 5f, 0f, 55f]);
+        for (int i = 40; i < 80; i++) PushAt(registry, i, [0f, 5f, 0f, float.NaN], [true, true, true, false]);
+
+        var result = Json(new ChronoLoadTools(ctx).GetMetricHistory(
+            "GpuTemp", deviceKey: gpu.Key, windowSeconds: 60, maxPoints: 20));
+
+        var avg = Doubles(result.GetProperty("avg"));
+        Assert.Contains(avg, v => v is null);
+        Assert.Contains(avg, v => v == 55);
     }
 
     [Fact]
@@ -172,20 +246,74 @@ public class McpToolTests
     }
 
     [Fact]
-    public void History_keeps_the_measured_values_when_only_part_of_the_window_is_missing()
+    public void Stats_quantiles_are_exact_while_the_interval_fits_in_the_ring()
     {
-        // 센서가 잠깐 끊겼다고 그 앞뒤의 멀쩡한 값까지 잃으면 안 된다.
         var (ctx, registry, gpu) = Build();
+        new ChronoLoadTools(ctx).ResetStats(confirm: true);
 
-        for (int i = 0; i < 30; i++) registry.PushFrame([0f, 5f, 0f, 55f]);
-        for (int i = 0; i < 30; i++) PushWithMissingTemperature(registry, 5f);
+        // 실사용 보고의 모양: 유휴 전력 22.5 W 근처. 예전 히스토그램은 p95 를 15.87 W 로 답했다.
+        for (int i = 0; i < 100; i++) PushAt(registry, i, [0f, i, 22.5e9f + i * 1e7f, 22.5f + i * 0.01f]);
 
-        var values = Json(new ChronoLoadTools(ctx).GetMetricHistory(
-                "GpuTemp", deviceKey: gpu.Key, windowSeconds: 30, maxPoints: 200))
-            .GetProperty("values").EnumerateArray().ToArray();
+        var block = Json(new ChronoLoadTools(ctx).GetStatsSinceReset(metric: "GpuTemp"))
+            .GetProperty("stats")[0];
 
-        Assert.Contains(values, v => v.ValueKind == JsonValueKind.Null);
-        Assert.Contains(values, v => v.ValueKind == JsonValueKind.Number && v.GetDouble() == 55);
+        Assert.True(block.GetProperty("quantilesExact").GetBoolean());
+        Assert.Equal(22.5f + 94 * 0.01f, block.GetProperty("p95").GetDouble(), 3);
+        Assert.InRange(block.GetProperty("p95").GetDouble(),
+            block.GetProperty("min").GetDouble(), block.GetProperty("max").GetDouble());
+
+        // 온도는 백분율이 아니다 — 포화 비율은 뜻이 없으므로 싣지 않는다.
+        Assert.False(block.TryGetProperty("saturatedFraction", out _));
+    }
+
+    [Fact]
+    public void Percent_metrics_report_the_saturated_fraction()
+    {
+        var (ctx, registry, gpu) = Build();
+        new ChronoLoadTools(ctx).ResetStats(confirm: true);
+
+        // 평균 44% 인데 30% 의 시간은 100% 다. 버스트형 추론 부하의 모양이다.
+        for (int i = 0; i < 100; i++) PushAt(registry, i, [0f, i % 10 < 3 ? 100f : 20f, 0f, 50f]);
+
+        var block = Json(new ChronoLoadTools(ctx).GetStatsSinceReset(metric: "GpuUtil"))
+            .GetProperty("stats")[0];
+
+        Assert.Equal(44, block.GetProperty("avg").GetDouble(), 3);
+        Assert.Equal(0.3, block.GetProperty("saturatedFraction").GetDouble(), 3);
+        Assert.Equal(90, block.GetProperty("saturationThreshold").GetDouble());
+    }
+
+    [Fact]
+    public void Reset_can_skip_or_narrow_the_previous_interval()
+    {
+        var (ctx, registry, gpu) = Build();
+        var tools = new ChronoLoadTools(ctx);
+        for (int i = 0; i < 10; i++) PushAt(registry, i, [10f, 50f, 1e9f, 60f]);
+
+        var narrowed = Json(tools.ResetStats(confirm: true, metric: "GpuUtil"));
+        var previous = narrowed.GetProperty("previousInterval");
+        Assert.Equal(1, previous.GetArrayLength());
+        Assert.Equal("GpuUtil", previous[0].GetProperty("metric").GetString());
+
+        // 걸러 돌려받아도 리셋은 전 지표에 걸린다 — 기준점이 지표마다 다르면 구간을 비교할 수 없다.
+        Assert.Equal(0, registry.StatsSnapshot(gpu.SlotOf(MetricKind.GpuTemp), StatsScope.Mcp).Count);
+
+        for (int i = 10; i < 20; i++) PushAt(registry, i, [10f, 50f, 1e9f, 60f]);
+        var bare = Json(tools.ResetStats(confirm: true, includePrevious: false));
+        Assert.Equal(JsonValueKind.Null, bare.GetProperty("previousInterval").ValueKind);
+    }
+
+    [Fact]
+    public void Reset_omits_metrics_that_never_reported()
+    {
+        var (ctx, registry, _) = Build();
+        for (int i = 0; i < 10; i++) PushWithMissingTemperature(registry, 5f);
+
+        var done = Json(new ChronoLoadTools(ctx).ResetStats(confirm: true));
+
+        Assert.DoesNotContain(done.GetProperty("previousInterval").EnumerateArray(),
+            b => b.GetProperty("metric").GetString() == "GpuTemp");
+        Assert.Equal(1, done.GetProperty("omittedEmpty").GetInt32());
     }
 
     [Fact]
@@ -215,12 +343,12 @@ public class McpToolTests
     }
 
     [Fact]
-    public void Process_tools_report_unavailable_rather_than_an_empty_list()
+    public async Task Process_tools_report_unavailable_rather_than_an_empty_list()
     {
         var (ctx, _, _) = Build();
 
         // 프로세스 소스가 없다. 빈 배열을 주면 "프로세스가 하나도 없다"로 읽힌다.
         Assert.Equal("processes_unavailable",
-            Json(new ProcessTools(ctx).ListProcesses()).GetProperty("error").GetString());
+            Json(await new ProcessTools(ctx).ListProcesses()).GetProperty("error").GetString());
     }
 }

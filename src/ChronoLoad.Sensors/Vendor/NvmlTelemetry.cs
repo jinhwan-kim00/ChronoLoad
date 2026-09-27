@@ -61,6 +61,18 @@ internal static partial class NvmlNative
 
     [LibraryImport("nvml.dll", EntryPoint = "nvmlDeviceGetClockInfo")]
     public static partial uint GetClockInfo(nint device, uint type, out uint megahertz);
+
+    /// <summary>모든 제한을 반영해 드라이버가 실제로 강제하는 전력 한도(mW).</summary>
+    [LibraryImport("nvml.dll", EntryPoint = "nvmlDeviceGetEnforcedPowerLimit")]
+    public static partial uint GetEnforcedPowerLimit(nint device, out uint milliwatts);
+
+    /// <summary>클럭 제한 사유 비트마스크. R535 부터의 이름이다.</summary>
+    [LibraryImport("nvml.dll", EntryPoint = "nvmlDeviceGetCurrentClocksEventReasons")]
+    public static partial uint GetCurrentClocksEventReasons(nint device, out ulong reasons);
+
+    /// <summary>같은 값의 옛 이름. 새 이름이 없는 드라이버에서만 쓴다.</summary>
+    [LibraryImport("nvml.dll", EntryPoint = "nvmlDeviceGetCurrentClocksThrottleReasons")]
+    public static partial uint GetCurrentClocksThrottleReasons(nint device, out ulong reasons);
 }
 
 /// <summary>
@@ -146,6 +158,8 @@ public sealed class NvmlTelemetry : IVendorTelemetry
         if (NvmlNative.GetUtilizationRates(device, out var utilization) == NvmlNative.Success)
         {
             sample.UtilPercent = utilization.Gpu;
+            // 같은 호출에 딸려 온다. SM 은 쉬는데 이것이 높으면 연산이 아니라 대역폭이 병목이다.
+            sample.MemBusyPercent = utilization.Memory;
             any = true;
         }
 
@@ -177,7 +191,51 @@ public sealed class NvmlTelemetry : IVendorTelemetry
             any = true;
         }
 
+        if (NvmlNative.GetEnforcedPowerLimit(device, out uint limitMilliwatts) == NvmlNative.Success && limitMilliwatts > 0)
+        {
+            sample.PowerLimitWatts = limitMilliwatts / 1000f;
+            any = true;
+        }
+
+        if (TryReadReasons(device, out ulong reasons))
+        {
+            sample.LimitReasons = ChronoLoad.Core.Metrics.GpuLimitReasonsExtensions.FromNvml(reasons);
+            any = true;
+        }
+
         return any;
+    }
+
+    // 새 진입점이 없는 드라이버에서 매번 예외를 치르지 않도록 한 번 가른 결과를 기억한다.
+    private bool _legacyReasons;
+
+    /// <summary>
+    /// 클럭 제한 사유. <c>ClocksEventReasons</c> 가 없으면(R535 이전 드라이버) 옛 이름
+    /// <c>ClocksThrottleReasons</c> 로 내려간다 — 같은 비트, 같은 뜻이다.
+    /// </summary>
+    private bool TryReadReasons(nint device, out ulong reasons)
+    {
+        reasons = 0;
+        if (!_legacyReasons)
+        {
+            try
+            {
+                return NvmlNative.GetCurrentClocksEventReasons(device, out reasons) == NvmlNative.Success;
+            }
+            catch (EntryPointNotFoundException)
+            {
+                _legacyReasons = true;
+            }
+        }
+
+        try
+        {
+            return NvmlNative.GetCurrentClocksThrottleReasons(device, out reasons) == NvmlNative.Success;
+        }
+        catch (EntryPointNotFoundException)
+        {
+            return false;
+        }
     }
 
     public void Dispose()
