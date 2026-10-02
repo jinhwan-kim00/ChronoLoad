@@ -196,12 +196,17 @@ public sealed class GpuProvider : ISensorProvider
         CollectEngineTypes();
 
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var listed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         int npuOrdinal = 0;
 
         _dedicated!.Read((instance, _) =>
         {
             string? token = ParseLuidToken(instance);
             if (token is null) return;
+
+            // 분리돼 내린 어댑터는 PDH 에 남아 있어도 다시 올리지 않는다(RetireGone).
+            listed.Add(token);
+            if (_goneTokens.Contains(token)) return;
 
             // 소프트웨어 렌더러(WARP)는 모니터링 대상이 아니다.
             var known = _metadata.GetValueOrDefault(token);
@@ -261,6 +266,10 @@ public sealed class GpuProvider : ISensorProvider
             _accelerators.Remove(token);
         }
 
+        // PDH 에서도 사라졌으면 잊는다. 같은 LUID 로 다시 나타나면 새 장치로 받는다.
+        // 읽기가 통째로 비었으면 판단하지 않는다 — 그걸로 잊으면 남아 있는 어댑터가 다시 올라왔다 내려간다.
+        if (listed.Count > 0) _goneTokens.IntersectWith(listed);
+
         if (_accelerators.Count > 0)
             SensorLog.Write($"가속기 {_accelerators.Count}개 등록 " +
                             $"(NPU {_accelerators.Values.Count(a => a.IsNpu)}개" +
@@ -285,6 +294,7 @@ public sealed class GpuProvider : ISensorProvider
 
         // 잠들어 있으면 붙이지 않는다. 바인딩 과정 자체가 장치를 건드린다.
         accelerator.PowerState = _power.Query(address);
+        if (accelerator.PowerState == DevicePowerState.Gone) return;
         if (accelerator.PowerState == DevicePowerState.Off) { accelerator.HasSlept = true; return; }
 
         foreach (var vendor in _vendors)
@@ -435,6 +445,10 @@ public sealed class GpuProvider : ISensorProvider
 
         _tick++;
 
+        // 장치 이벤트가 온 틱에는 전원 상태를 바로 다시 본다. 분리된 eGPU 를 Slow 틱까지 기다리며
+        // 계속 읽으면 그 사이에 네이티브 호출이 사라진 장치를 만난다.
+        bool deviceEvent = _enumeratePending;
+
         if (_enumeratePending)
         {
             RefreshAdapters();
@@ -450,7 +464,7 @@ public sealed class GpuProvider : ISensorProvider
         if (TraceVendorCalls) SensorLog.Write($"[틱 {_tick}] 메모리");
         ReadMemory(writer);
         if (TraceVendorCalls) SensorLog.Write($"[틱 {_tick}] 벤더");
-        ReadVendor(writer);
+        ReadVendor(writer, deviceEvent);
 
         // 벤더 경로가 사용률을 매 틱 주는 어댑터는 비싼 엔진 와일드카드를 탈 이유가 없다.
         if (_tick % EngineEvery == 0)
@@ -467,9 +481,10 @@ public sealed class GpuProvider : ISensorProvider
     /// 온도·전력·클럭은 <b>PDH로는 얻을 수 없다</b>. 벤더 경로가 붙은 어댑터만 값이 들어간다.
     /// 사용률도 벤더 경로가 있으면 여기서 매 틱 갱신한다(PDH 엔진은 4틱마다라 덜 촘촘하다).
     /// </summary>
-    private void ReadVendor(in SampleWriter writer)
+    private void ReadVendor(in SampleWriter writer, bool deviceEvent)
     {
-        bool refreshPower = _tick % VendorSlowEvery == 0;
+        bool refreshPower = _tick % VendorSlowEvery == 0 || deviceEvent;
+        List<Accelerator>? gone = null;
 
         // 미뤄둔 Intel 경로는 장치가 깨어난 뒤에 연다.
         if (refreshPower && _intelPathDeferred && AnyIntelAdapterAwake())
@@ -488,6 +503,12 @@ public sealed class GpuProvider : ISensorProvider
                 if (accelerator.PciAddress is not { } pci) continue;
 
                 var state = _power.Query(pci);
+                if (state == DevicePowerState.Gone)
+                {
+                    (gone ??= []).Add(accelerator);
+                    continue;
+                }
+
                 if (state != accelerator.PowerState)
                 {
                     SensorLog.Write($"{accelerator.Handle.Info.ShortName} 전원 {accelerator.PowerState} → {state}");
@@ -526,8 +547,15 @@ public sealed class GpuProvider : ISensorProvider
             if (!full && accelerator.HasSlept && accelerator.PciAddress is { } address)
                 accelerator.PowerState = _power.Query(address);
 
+            if (accelerator.PowerState == DevicePowerState.Gone)
+            {
+                if (gone?.Contains(accelerator) != true) (gone ??= []).Add(accelerator);
+                continue;
+            }
+
             if (accelerator.PowerState == DevicePowerState.Off)
             {
+                foreach (var binding in accelerator.Vendors) binding.Telemetry.SetActive(binding.Handle, false);
                 accelerator.HasVendorUtil = false;
                 accelerator.HasVendorMedia = false;
                 if (full)
@@ -550,6 +578,8 @@ public sealed class GpuProvider : ISensorProvider
             GpuLimitReasons? reasons = null;
             foreach (var binding in accelerator.Vendors)
             {
+                binding.Telemetry.SetActive(binding.Handle, true);
+
                 if (TraceVendorCalls && full)
                     SensorLog.Write($"→ {binding.Telemetry.Name} 읽기 {accelerator.Handle.Info.ShortName} " +
                                     $"(전원 {accelerator.PowerState})");
@@ -605,7 +635,45 @@ public sealed class GpuProvider : ISensorProvider
 
             if (full) _limitReasons[accelerator.Handle.Key] = reasons;
         }
+
+        if (gone is not null) RetireGone(gone);
     }
+
+    /// <summary>
+    /// 장치 노드가 사라진 어댑터를 놓는다. 벤더 경로를 먼저 끊고 카드를 은퇴시킨다.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>PDH 가 아직 그 어댑터를 보여도 기다리지 않는다.</b> eGPU 를 뽑으면 그 GPU 를 쓰던 프로세스가
+    /// 참조를 놓을 때까지 WDDM 어댑터와 PDH 인스턴스가 남는다. 그것을 기준으로 삼으면 카드는
+    /// 한동안 대기로 보이고, 그 사이에 벤더 경로가 사라진 장치의 핸들을 다시 잡을 수 있다.
+    /// </para>
+    /// <para>
+    /// 은퇴한 토큰은 PDH 에서 사라질 때까지 <see cref="Enumerate"/> 가 다시 등록하지 않는다.
+    /// 히스토리는 은퇴 규칙대로 60초 보관되므로, 그 안에 다시 꽂으면 이어진다.
+    /// </para>
+    /// </remarks>
+    private void RetireGone(List<Accelerator> gone)
+    {
+        foreach (var accelerator in gone)
+        {
+            foreach (var binding in accelerator.Vendors) binding.Telemetry.SetActive(binding.Handle, false);
+            accelerator.Vendors.Clear();
+
+            SensorLog.Write($"{accelerator.Handle.Info.ShortName} 분리됨 — 벤더 경로를 끊고 카드를 내린다");
+            _registry?.Retire(accelerator.Handle.Key, DateTime.UtcNow.Ticks);
+            _accelerators.Remove(accelerator.Token);
+            _limitReasons.TryRemove(accelerator.Handle.Key, out _);
+            _goneTokens.Add(accelerator.Token);
+        }
+
+        // 다음 틱에 다시 열거한다. WDDM 어댑터가 정말 빠졌으면 벤더 경로도 그때 다시 열린다(RefreshAdapters).
+        _enumeratePending = true;
+        PublishLayers();
+    }
+
+    /// <summary>분리돼 은퇴시킨 어댑터의 LUID 토큰. PDH 에서 사라질 때까지 다시 등록하지 않는다.</summary>
+    private readonly HashSet<string> _goneTokens = new(StringComparer.OrdinalIgnoreCase);
 
     // 샘플링 스레드만 쓰고 MCP 스레드가 읽는다. 값 하나짜리 갱신이라 동시 사전으로 둔다.
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, GpuLimitReasons?> _limitReasons =
@@ -804,7 +872,7 @@ public sealed class GpuProvider : ISensorProvider
             sawIntel = true;
 
             var state = _power.Query(new PciAddress(adapter.PciBus, adapter.PciDevice, adapter.PciFunction));
-            if (state != DevicePowerState.Off) return true;
+            if (state is not (DevicePowerState.Off or DevicePowerState.Gone)) return true;
         }
 
         // Intel 어댑터를 못 찾았으면 막을 이유가 없다. 판단은 IGCL 에 맡긴다.

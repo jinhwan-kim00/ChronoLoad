@@ -20,6 +20,7 @@ internal struct NvmlMemory
 internal static partial class NvmlNative
 {
     public const uint Success = 0;
+    public const uint NotSupported = 3;          // NVML_ERROR_NOT_SUPPORTED
     public const uint TemperatureGpu = 0;
     public const uint ClockGraphics = 0;
 
@@ -282,6 +283,15 @@ public sealed class NvmlTelemetry : IVendorTelemetry
     // PCIe 누적 카운터의 직전 값과, 타이머가 구해 둔 최신 처리량. 장치별. _pcieGate 로 지킨다.
     private readonly Dictionary<int, (ulong Rx, ulong Tx, long StampUs)> _pcie = [];
     private readonly Dictionary<int, (float Rx, float Tx)> _pcieRates = [];
+
+    /// <summary>타이머가 읽어도 되는 장치. 프로바이더가 깨어 있다고 확인한 것만 들어온다.</summary>
+    private readonly HashSet<int> _active = [];
+
+    /// <summary>필드가 미지원이라고 답한 장치. 장치별로 둔다 — 한 장이 못 준다고 나머지까지 끄지 않는다.</summary>
+    private readonly HashSet<int> _pcieUnsupportedDevices = [];
+
+    /// <summary>일시적 실패를 한 번만 적기 위한 표시.</summary>
+    private readonly HashSet<int> _pcieFailureLogged = [];
     private readonly Lock _pcieGate = new();
     private nint _fieldBuffer;
     private bool _pcieUnsupported;
@@ -311,8 +321,27 @@ public sealed class NvmlTelemetry : IVendorTelemetry
         lock (_pcieGate)
         {
             if (!_initialized || _pcieUnsupported) return;
-            for (int handle = 0; handle < _devices.Count; handle++)
+            foreach (int handle in _active)
                 if (TryReadPcie(handle, out float rx, out float tx)) _pcieRates[handle] = (rx, tx);
+        }
+    }
+
+    public void SetActive(int handle, bool active)
+    {
+        lock (_pcieGate)
+        {
+            if (active)
+            {
+                if ((uint)handle < (uint)_devices.Count) _active.Add(handle);
+                return;
+            }
+
+            // 다시 켜질 때 잠든 동안의 누적을 한 구간으로 나누지 않게 기준선도 버린다.
+            if (_active.Remove(handle))
+            {
+                _pcie.Remove(handle);
+                _pcieRates.Remove(handle);
+            }
         }
     }
 
@@ -344,13 +373,25 @@ public sealed class NvmlTelemetry : IVendorTelemetry
     /// </para>
     /// <para>
     /// 카운터는 되감길 수 있다(헤더 주석). 줄어들면 그 표본은 버리고 기준선만 새로 잡는다.
-    /// 드라이버가 필드를 지원하지 않으면 한 번 확인하고 다시 묻지 않는다.
+    /// </para>
+    /// <para>
+    /// <b>필드별 반환 코드가 <c>NOT_SUPPORTED</c> 일 때만 그 장치를 다시 묻지 않는다.</b> 다른 오류는 그 표본만
+    /// 버린다. 예전에는 어느 장치든 한 번 실패하면 모든 NVIDIA GPU 의 PCIe 수집을 영구히 껐다 — eGPU 를
+    /// 분리하는 도중에 그 장치의 필드 읽기가 실패하자, 붙어 있는 RTX 5080 의 PCIe 값까지 사라질 뻔했다.
     /// </para>
     /// </remarks>
+    /// <summary>로그용. 핸들에 해당하는 PCI 주소.</summary>
+    private string DescribeDevice(int handle)
+    {
+        foreach (var (address, index) in _byAddress)
+            if (index == handle) return $"PCI {address}";
+        return $"장치 {handle}";
+    }
+
     private bool TryReadPcie(int handle, out float rxPerSecond, out float txPerSecond)
     {
         rxPerSecond = txPerSecond = float.NaN;
-        if (_pcieUnsupported) return false;
+        if (_pcieUnsupported || _pcieUnsupportedDevices.Contains(handle)) return false;
 
         const int size = NvmlNative.FieldValueSize;
         if (_fieldBuffer == 0) _fieldBuffer = Marshal.AllocHGlobal(size * 2);
@@ -369,10 +410,23 @@ public sealed class NvmlTelemetry : IVendorTelemetry
             return false;
         }
 
-        if (Marshal.ReadInt32(_fieldBuffer, 28) != 0 || Marshal.ReadInt32(_fieldBuffer, size + 28) != 0)
+        uint rxRc = (uint)Marshal.ReadInt32(_fieldBuffer, 28);
+        uint txRc = (uint)Marshal.ReadInt32(_fieldBuffer, size + 28);
+        if (rxRc != NvmlNative.Success || txRc != NvmlNative.Success)
         {
-            _pcieUnsupported = true;       // 이 드라이버·GPU 는 필드를 주지 않는다
-            SensorLog.Write("NVML: PCIe 누적 바이트 필드를 지원하지 않는다 — PCIe 처리량 없음");
+            string device = DescribeDevice(handle);
+            if (rxRc == NvmlNative.NotSupported || txRc == NvmlNative.NotSupported)
+            {
+                _pcieUnsupportedDevices.Add(handle);
+                SensorLog.Write($"NVML: {device} 는 PCIe 누적 바이트 필드를 지원하지 않는다 — 이 장치만 PCIe 처리량 없음");
+            }
+            else if (_pcieFailureLogged.Add(handle))
+            {
+                SensorLog.Write($"NVML: {device} PCIe 필드 읽기 실패(RX {rxRc} · TX {txRc}) — 이 표본은 버린다");
+            }
+
+            // 다음 성공 표본이 실패 구간을 한 간격으로 나누지 않게 기준선도 버린다.
+            _pcie.Remove(handle);
             return false;
         }
 
@@ -433,6 +487,9 @@ public sealed class NvmlTelemetry : IVendorTelemetry
         {
             if (_fieldBuffer != 0) { Marshal.FreeHGlobal(_fieldBuffer); _fieldBuffer = 0; }
             _pcieUnsupported = true;
+            _active.Clear();
+            _pcieUnsupportedDevices.Clear();
+            _pcieFailureLogged.Clear();
         }
 
         if (_initialized)

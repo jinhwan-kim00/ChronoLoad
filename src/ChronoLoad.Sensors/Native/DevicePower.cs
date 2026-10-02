@@ -16,11 +16,20 @@ public enum DevicePowerState
 
     /// <summary>D3 — 저전력 대기. 외장 GPU 는 유휴 시 여기로 내려간다.</summary>
     Off = 4,
+
+    /// <summary>
+    /// 장치 노드가 없어졌다 — 분리됐다. Windows 값이 아니다. 대기보다 강한 상태라 다시는 건드리지 않는다.
+    /// </summary>
+    Gone = -1,
 }
 
 internal static partial class SetupApi
 {
     public const int CR_SUCCESS = 0;
+
+    /// <summary>들고 있던 DEVINST 의 장치 노드가 없어졌다. 분리가 끝나면 이 값이 온다.</summary>
+    public const int CR_NO_SUCH_DEVINST = 0x0D;
+
     public const int DIGCF_PRESENT = 0x02;
 
     public const uint SPDRP_BUSNUMBER = 0x15;
@@ -101,6 +110,9 @@ public sealed class DevicePowerProbe
     private readonly Dictionary<PciAddress, uint> _devInstByAddress = [];
     private readonly HashSet<PciAddress> _loggedFailure = [];
 
+    /// <summary>노드가 사라진 것을 본 주소. <see cref="Refresh"/> 가 지운다.</summary>
+    private readonly HashSet<PciAddress> _gone = [];
+
     public int Count => _devInstByAddress.Count;
 
     /// <summary>전원 상태를 물어볼 수 있는 어댑터들.</summary>
@@ -110,6 +122,7 @@ public sealed class DevicePowerProbe
     public void Refresh()
     {
         _devInstByAddress.Clear();
+        _gone.Clear();
 
         var classGuid = SetupApi.DisplayClass;
         nint set = SetupApi.GetClassDevs(ref classGuid, 0, 0, SetupApi.DIGCF_PRESENT);
@@ -152,8 +165,15 @@ public sealed class DevicePowerProbe
     /// <b>모르는 것을 대기 상태로 간주하지 않는다.</b> 그랬다가는 조회가 실패하는 시스템에서
     /// 온도·전력이 영영 안 나오고, 원인도 보이지 않는다.
     /// </summary>
+    /// <remarks>
+    /// <b>장치 노드가 없어진 것은 "모름"이 아니다.</b> 열거 때 있던 DEVINST 가 <c>CR_NO_SUCH_DEVINST</c> 를
+    /// 돌려주면 장치가 분리된 것이고 <see cref="DevicePowerState.Gone"/> 으로 답한다. 이것을 모름으로 받아
+    /// 깨어 있다고 본 탓에, eGPU 를 뽑자 분리된 장치의 NVML 핸들로 사용률을 읽다가 프로세스가 접근 위반으로
+    /// 죽었다. 분리 중에는 먼저 D3 로 보이고(대기 표시) 노드가 사라지는 순간 이 값으로 바뀐다.
+    /// </remarks>
     public DevicePowerState Query(PciAddress address)
     {
+        if (_gone.Contains(address)) return DevicePowerState.Gone;
         if (!_devInstByAddress.TryGetValue(address, out uint devInst)) return DevicePowerState.Unknown;
 
         nint buffer = Marshal.AllocHGlobal(SetupApi.PowerDataBufferSize);
@@ -163,6 +183,15 @@ public sealed class DevicePowerProbe
 
             int rc = SetupApi.GetDevNodeRegistryProperty(
                 devInst, SetupApi.CM_DRP_DEVICE_POWER_DATA, out _, buffer, ref size, 0);
+
+            if (rc == SetupApi.CR_NO_SUCH_DEVINST)
+            {
+                // 다음 열거까지 이 주소는 계속 없는 것으로 답한다. 노드 번호는 재사용될 수 있어서
+                // 다시 물으면 다른 장치의 상태를 대신 읽을 수 있다.
+                _gone.Add(address);
+                SensorLog.Write($"PCI {address} 장치 노드가 사라졌다 — 분리로 본다");
+                return DevicePowerState.Gone;
+            }
 
             if (rc != SetupApi.CR_SUCCESS)
             {

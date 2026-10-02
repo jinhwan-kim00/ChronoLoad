@@ -84,4 +84,14 @@ public interface IVendorTelemetry : IDisposable
     /// 사용률만 Fast 티어로 남기고 나머지는 몇 틱에 한 번 읽는다.
     /// </param>
     bool TryRead(int handle, bool full, out VendorSample sample);
+
+    /// <summary>
+    /// 샘플링 스레드 밖에서 장치를 읽는 경로(NVML PCIe 타이머)에 이 장치를 읽어도 되는지 알린다.
+    /// 처음에는 아무 장치도 읽지 않는다 — 깨어 있다고 확인된 장치만 프로바이더가 켠다.
+    /// </summary>
+    /// <remarks>
+    /// 프로바이더는 잠든 장치·분리된 장치를 건드리지 않는데, 별도 스레드가 장치 목록을 통째로 돌면
+    /// 그 판단을 비켜 간다. 분리된 eGPU 의 핸들로 네이티브 호출을 하면 프로세스가 죽는다.
+    /// </remarks>
+    void SetActive(int handle, bool active) { }
 }
