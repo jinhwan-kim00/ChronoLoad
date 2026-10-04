@@ -86,7 +86,7 @@ public sealed class ProcessWatchTools(McpContext ctx)
                 : Enumerable.Range(0, maxPoints).Select(b => b * width / TimeSpan.TicksPerMillisecond).ToArray(),
             cpuPercent = Series(history.CpuPercent[first..], buckets, maxPoints),
             workingSetBytes = Series(history.WorkingSetBytes[first..], buckets, maxPoints),
-            // 어댑터·계열마다 한 줄. 처음 쓰기 전의 칸은 null(값 없음), 쓰지 않은 칸은 0 이다.
+            // 어댑터·계열마다 한 줄. 처음 쓰기 전의 칸과 엔진 값을 못 쓴 칸(상한 초과·깨진 카운터)은 null(값 없음), 쓰지 않은 칸은 0 이다.
             gpu = history.Engines
                 .OrderBy(e => e.Key.AdapterKey).ThenBy(e => e.Key.Family)
                 .Select(e => new

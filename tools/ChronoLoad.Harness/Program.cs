@@ -44,7 +44,7 @@ if (args.Contains("--mcp"))
     var mcpGpu = new GpuProvider();
     await mcpEngine.AddProviderAsync(mcpGpu);
 
-    using var mcpProcesses = new ProcessProvider();
+    using var mcpProcesses = new ProcessProvider { KnownBrokenEngine = mcpGpu.IsEngineInstanceBroken };
     mcpEngine.Start();
 
     var context = new ChronoLoad.Mcp.McpContext(mcpRegistry, mcpEngine)

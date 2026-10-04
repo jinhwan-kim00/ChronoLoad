@@ -2,8 +2,8 @@
 
 > GPU 워크로드 중심의 실시간 시스템 모니터. WPF 세로형 위젯 + MCP 서버.
 
-- **문서 버전**: 1.45 — 개정 이력은 [`CHANGE_LOG.md`](CHANGE_LOG.md)
-- **최초 작성**: 2026-09-23 · **최종 갱신**: 2026-10-03
+- **문서 버전**: 1.46 — 개정 이력은 [`CHANGE_LOG.md`](CHANGE_LOG.md)
+- **최초 작성**: 2026-09-23 · **최종 갱신**: 2026-10-04
 - **대상 런타임**: .NET 10 (`net10.0-windows`), Windows 10 20H2 이상 / Windows 11
 - **UX 시각 설계서**: [`docs/ux-design.html`](docs/ux-design.html) — 브라우저로 열면 라이브 목업이 동작합니다
 
@@ -396,7 +396,8 @@ Intel은 iGPU와 Arc dGPU를 같은 API 계열로 다룰 수 있어 투자 대�
 5. **하이브리드 노트북에서는 iGPU가 디스플레이만 담당하고 연산은 dGPU가 한다.** iGPU 카드를 기본 접힘으로 두는 근거다.
 6. **사용률은 `ctlPowerTelemetryGet` 의 활동 카운터로 매 틱 구한다.** 누적 활동 초를 타임스탬프로 나눈 기울기라 두 읽기 사이 **전 구간의 시간 가중 평균**이다 — 250ms 사이의 버스트가 빠짐없이 들어간다. 같은 구조체에 그룹이 셋 온다: 전체(`globalActivityCounter`, 오프셋 128)·렌더+컴퓨트(152)·미디어(176). **전체는 미디어를 세지 않는다** — QSV 인코딩에서 전체 17%, 미디어 200%. 그래서 `GpuUtil` 은 세 그룹의 최댓값이다(무엇이든 돈 시간 — NVML 과 같은 정의). 렌더+컴퓨트는 `GpuRenderCompute` 로, 미디어는 `GpuVideo` 로 매 틱 적는다(PDH 의 1초 Video 계열을 덮는다 — B580 의 QSV 인코딩은 PDH 에서 `copy` 로만 잡혔다). **그룹 카운터는 그룹 안 엔진들의 활동 시간 합이라**(미디어가 1초에 2.02초 = 엔진 둘) 100 으로 자른다 — 100 은 "엔진 하나 몫 이상 바빴다"이다. IGCL 의 엔진 그룹은 이 셋뿐이라 3D·Compute·Copy 를 가르지 못한다. 온도·전력·클럭은 그대로 1초에 한 번이다
 7. **클럭은 직전 1초 활동이 0.5% 이상일 때만 낸다.** `gpuCurrentClockFrequency` 는 렌더 블록이 절전(RC6)에 들어가 있어도 마지막 요청 주파수를 돌려준다 — 실사용에서 유휴 B580 이 2850 MHz(최대)로 고정돼 보였다. 이 PC 실측: 깨어난 직후 첫 읽기가 2850 MHz·1.035 V, 이어서 400 MHz·0.74 V, QSV 인코딩 부하에서 550 → 1950 MHz. 돌고 있는 클럭이 없을 때는 값을 비운다(`null`). 0 은 측정값이 아니다. 구조체 버전 1 의 `gpuEffectiveClock` 은 B580 이 지원하지 않는다(`bSupported=false`)
-8. **PDH 엔진 값을 Intel 에서 믿지 않는다.** B580 에 OpenCL 연산(ffmpeg `avgblur_opencl`)을 걸자 PDH `compute` 가 1초 간격으로 **1.8e14(쓰레기), 53.2, 143.8, 인스턴스 없음** 순으로 나왔다. 같은 때 하드웨어 카운터는 전체 100%·렌더+컴퓨트 99.5% 로 고르다 — 실사용 보고("GpuUtil 99.9% 일정한데 GpuCompute 가 0↔100")를 그대로 재현한 것이다. 하네스 실측 14초: `GpuRenderCompute` 평균 99.5%(최소 96.7%), PDH `GpuCompute` 평균 3.5%(최대 49%). 한 인스턴스가 1000 을 넘기면 그 표본에서 뺀다 — 100 으로 자르면 "그 1초는 포화"라는 거짓 표본이 된다. PDH 계열 값은 어느 엔진인지를 가를 때만 쓰고 여러 초의 평균으로 읽는다. NVIDIA 는 PDH 값이 고르다(CUDA 부하 1초 간격 95.7~97.7%)
+8. **PDH 엔진 값을 Intel 에서 믿지 않는다.** B580 에 OpenCL 연산(ffmpeg `avgblur_opencl`)을 걸자 PDH `compute` 가 1초 간격으로 **1.8e14(쓰레기), 53.2, 143.8, 인스턴스 없음** 순으로 나왔다. 같은 때 하드웨어 카운터는 전체 100%·렌더+컴퓨트 99.5% 로 고르다 — 실사용 보고("GpuUtil 99.9% 일정한데 GpuCompute 가 0↔100")를 그대로 재현한 것이다. 하네스 실측 14초: `GpuRenderCompute` 평균 99.5%(최소 96.7%), PDH `GpuCompute` 평균 3.5%(최대 49%). 한 인스턴스가 1000 을 넘기면 그 값을 쓰지 않고 **그 틱의 그 엔진 종류·계열을 측정 불가(`null`)로 적는다** — 100 으로 자르면 "그 1초는 포화"라는 거짓 표본이 되고, 빼기만 하면 남은 다른 프로세스의 0 이 "쉬었다"가 된다. 남은 인스턴스의 합이 이미 100 이면 참값도 100 이라 그대로 쓴다. 정상 카운터도 계상이 몰리면 상한을 넘는다 — 130V 에 ffmpeg `nlmeans_opencl` 을 걸자 원시값은 단조 증가인데 1초에 376%·1,413% 가 들어왔다. PDH 계열 값은 어느 엔진인지를 가를 때만 쓰고 여러 초의 평균으로 읽는다. NVIDIA 는 PDH 값이 고르다(CUDA 부하 1초 간격 95.7~97.7%)
+9. **드라이버가 엔진 누적값을 거꾸로 돌리는 카운터는 그 프로세스가 사는 동안 믿지 않는다.** Arc 130V(Lunar Lake 내장)에서 OpenVINO 추론 중 그 프로세스의 `engtype_Neural` 인스턴스 하나의 원시값(100ns)이 음수였고 1초 사이에 +28.7e9, −13.8e9, +2.7e9, +7.5e9, −17.4e9 로 흔들렸다. PDH 는 279,947%·27,007%·73,127% 를 내거나 차분이 음수인 틱에 `PDH_CSTATUS_INVALID_DATA` 를 줬다. 같은 때 IGCL 은 전체 99.95%·렌더+컴퓨트 96% 였다. 예전처럼 버리기만 하자 `GpuCompute` 가 30초 내내 0(포화 비율 0)이었고, 그 프로세스는 프로세스 표에서 GPU 를 쓰지 않는 것으로 보였다. 값의 크기로는 정상 몰아치기(위 8)와 가를 수 없으므로 **직전에 0 보다 큰 값을 내던 인스턴스가 상태 무효로 나오는 것**을 깨짐으로 본다 — 새 인스턴스의 첫 무효(기준선 없음)와 구별된다. 깨진 인스턴스는 그럴듯한 값을 내도 쓰지 않고(쓰레기가 0~1000 에 떨어지면 거짓 포화가 된다), 10번 연달아 정상 범위면 다시 믿는다(`EngineCounterGuard`). `get_gpu_status` 는 `brokenEngineCounters` 로 그 엔진 종류를 알리고 `aiSignals.primary` 에서 그 계열을 뺀다. 프로세스 표는 `gpuUnmeasured` 로 알린다 — 프로세스 수집기는 요청이 있을 때만 켜져 첫 응답 전에 거꾸로 가는 것을 볼 수 없으므로, 줄곧 보고 있는 GPU 수집기가 알아낸 깨진 인스턴스를 같이 쓴다(`GpuProvider.IsEngineInstanceBroken`). 또 PDH 를 100 으로 잘라 읽지 않는다 — 자르면 쓰레기가 100 이 되어 상한 판정을 통과한다. 화면은 영향이 없다 — 130V 의 사용률·보조선은 IGCL 이다
 
 *계층 B′ — `D3DKMTQueryStatistics` (벤더 무관 보조)*
 어댑터 세그먼트별 메모리(로컬/논로컬)를 PDH보다 정확하게 분해한다. 특히 Intel에서 UMA를 다루는 방식이 모호할 때 교차검증용.
@@ -1677,14 +1678,14 @@ WPF 의 `Microsoft.Win32.SaveFileDialog` 는 속을 셸의 `IFileSaveDialog` 로
 | 툴 | 입력 | 출력 요약 |
 |---|---|---|
 | `get_system_snapshot` | — | CPU/메모리 + **`gpus[]`, `disks[]`, `networks[]` 배열** + 호스트 정보 |
-| `get_gpu_status` | `adapterKey?`, `adapterIndex?`, `verbose?` | 생략 시 전 어댑터. 모델명, **제조사**, 외장/내장, 사용률, **`memoryBusyPercent`**(NVML), **`aiSignals`**(AI 작업이 실리는 지표, §5.4), **`powerLimitWatts`·`powerLimitPercent`**, **`throttling`·`limitReasons`**(클럭 제한 사유, §5.4), 전용/공유 메모리, 온도, 전력, 클럭, `vramExceeded`, **활성 센서 계층**. `verbose` 면 `engines`(3D·Compute·Copy·Video 계열, 시계열과 같은 값)와 `engineTypes`(`engtype` 별 원값) |
+| `get_gpu_status` | `adapterKey?`, `adapterIndex?`, `verbose?` | 생략 시 전 어댑터. 모델명, **제조사**, 외장/내장, 사용률, **`memoryBusyPercent`**(NVML), **`aiSignals`**(AI 작업이 실리는 지표, §5.4), **`powerLimitWatts`·`powerLimitPercent`**, **`throttling`·`limitReasons`**(클럭 제한 사유, §5.4), 전용/공유 메모리, 온도, 전력, 클럭, `vramExceeded`, **활성 센서 계층**. **`brokenEngineCounters`**(PDH 카운터가 깨진 엔진 종류 — 그 계열은 `null`, §5.4). `verbose` 면 `engines`(3D·Compute·Copy·Video 계열, 시계열과 같은 값)와 `engineTypes`(`engtype` 별 원값, 이번 값을 못 쓴 종류는 `null`) |
 | `get_disk_status` | `diskIndex?` | 읽기/쓰기 B/s, 활성 %, 큐, 응답 ms, **매체(SSD/HDD)**, 버스, 모델·용량 |
 | `get_network_interfaces` | `includeTunnels?` | 인터페이스별 이름/**종류**/링크 속도/RX·TX B/s/누적. Wi-Fi는 SSID·신호·대역. **터널은 기본 제외**이며 포함 시 `countedTwiceOn` 필드로 하위 인터페이스를 명시 |
 | `get_metric_history` | `metric`, `deviceKey?`, `windowSeconds`(≤900), `maxPoints`(≤500) | **실측 표본만**, 시각과 함께. `startAt` + `offsetsMs[i]` 가 점의 시각이고 `measuredPeriodMs` 가 그 지표의 실제 갱신 주기다. 표본이 `maxPoints` 이하면 `raw`(점 하나 = 실측 하나), 넘치면 `bucketed` — 시간을 **정확히 `maxPoints` 칸으로 등분**해 칸마다 `avg`·`min`·`max`·`samples`. 빈 칸은 `null` |
 | `get_stats_since_reset` | `metric?`, `deviceKey?`, `saturationThreshold?`(기본 90) | `{ resetAt, elapsedSeconds, sampleCount, avg, min, max, p50, p95, p99, quantilesExact, stdDev }`. 백분율 지표는 `saturationThreshold`·`saturatedFraction` 을 더한다(§7.3) |
 | `reset_stats` | `confirm: true`, `includePrevious?`, `metric?`, `deviceKey?` | 리셋 후 **직전 구간 통계를 반환**. 표본이 없던 지표는 빼고 그 수를 `omittedEmpty` 로. 거르는 인자는 **돌려받을 범위만** 좁힌다 — 리셋은 늘 전 지표에 걸린다. 지표마다 기준점이 다르면 구간끼리 비교할 수 없다 |
-| `list_processes` | `sortBy`(cpu\|memory\|gpu\|gpuMemory\|diskIo), `adapterKey?`, `limit`(≤50), `nameFilter?` | PID, 이름, CPU%, 워킹셋, 어댑터별 GPU%·메모리, 디스크 I/O. `gpu`·`gpuMemory`·`diskIo` 정렬은 **그 값이 0 인 프로세스를 빼고** 수를 `excludedIdle` 로 — 동률 0 이 PID 순으로 뒤따라 붙으면 쓰지 않는 프로세스가 순위에 끼어 보인다. 동률은 CPU → 워킹셋 순. 어댑터 키는 대소문자를 가리지 않는다 |
-| `get_process_detail` | `pid` | 위 + 경로, 명령줄(권한 허용 시), 부모 PID, 어댑터별·엔진별 GPU 사용률 |
+| `list_processes` | `sortBy`(cpu\|memory\|gpu\|gpuMemory\|diskIo), `adapterKey?`, `limit`(≤50), `nameFilter?` | PID, 이름, CPU%, 워킹셋, 어댑터별 GPU%·메모리, 디스크 I/O. `gpu`·`gpuMemory`·`diskIo` 정렬은 **그 값이 0 인 프로세스를 빼고** 수를 `excludedIdle` 로 — 동률 0 이 PID 순으로 뒤따라 붙으면 쓰지 않는 프로세스가 순위에 끼어 보인다. 단 `gpu` 정렬에서 엔진 값을 측정할 수 없던(`gpuUnmeasured`) 프로세스는 빼지 않고 **맨 앞에** 둔다 — 0 이 아니라 모르는 것이고, 0 으로 줄 세우면 `limit` 밖으로 밀려 GPU 를 다 쓰는 프로세스가 사라진다. 동률은 CPU → 워킹셋 순. 어댑터 키는 대소문자를 가리지 않는다 |
+| `get_process_detail` | `pid` | 위 + 경로, 명령줄(권한 허용 시), 부모 PID, 어댑터별·엔진별 GPU 사용률. 엔진 값을 못 쓴 어댑터·엔진은 표에서 빠지고 `gpuUnmeasured` 에 적힌다(§5.4) |
 | `watch_process` | `pid`, `durationSeconds?`(기본 600, ≤3600) | 1초 기록 시작(§5.6). 최대 8개. 이미 감시 중이면 기한만 늘린다 |
 | `get_process_history` | `pid`, `windowSeconds?`(≤900), `maxPoints?`(≤500) | `startAt` + `offsetsMs`, `cpuPercent`·`workingSetBytes`, 어댑터·계열별 `gpu[]`. 넘치면 시간 등분해 칸마다 `avg`·`max` |
 | `unwatch_process` | `pid` | 감시를 풀고 기록을 버린다 |

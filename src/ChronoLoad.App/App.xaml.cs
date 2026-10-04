@@ -89,7 +89,8 @@ public partial class App : Application
     private void StartMcp(MetricRegistry registry, SampleEngine engine, GpuProvider gpu,
                           SamplingOptions options)
     {
-        _processes = new ProcessProvider();
+        // GPU 수집기가 줄곧 보고 알아낸 깨진 엔진 카운터를 프로세스 표도 쓴다(§5.4).
+        _processes = new ProcessProvider { KnownBrokenEngine = gpu.IsEngineInstanceBroken };
 
         var context = new Mcp.McpContext(registry, engine)
         {

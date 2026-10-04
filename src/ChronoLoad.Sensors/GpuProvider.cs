@@ -703,8 +703,15 @@ public sealed class GpuProvider : ISensorProvider
     /// 엔진 인스턴스를 어댑터별·<c>engtype</c>별로 모은다.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// 전부 더하면 100%를 훌쩍 넘는다. 작업 관리자와 같은 정의를 쓰려면
     /// <b>그룹 안에서는 합산하고 그룹끼리는 최댓값</b>을 취해야 한다.
+    /// </para>
+    /// <para>
+    /// 쓰지 않은 인스턴스(<see cref="EngineCounterGuard"/> — 상한을 넘은 값, 깨진 카운터)가 있는 그룹은 남은 인스턴스의
+    /// 합이 하한일 뿐이다. 하한이 이미 100 이면 그대로 맞으므로 쓰고, 아니면 그 그룹과 그것이 속한 계열·사용률을
+    /// <b>측정 불가</b>로 적는다. 깨진 카운터가 있는 종류는 따로 알린다 — 한 틱 튄 것과 달리 계속 그렇기 때문이다.
+    /// </para>
     /// </remarks>
     private void ReadEngines(in SampleWriter writer)
     {
@@ -721,41 +728,64 @@ public sealed class GpuProvider : ISensorProvider
             return;
         }
 
-        foreach (var accelerator in _accelerators.Values) accelerator.EngineGroups.Clear();
+        foreach (var accelerator in _accelerators.Values)
+        {
+            accelerator.EngineGroups.Clear();
+            accelerator.UnknownGroups.Clear();
+            accelerator.BrokenGroups.Clear();
+        }
 
         bool watching = Watch.Any;
         if (watching) Watch.BeginEngines();
+        _engineGuard.Begin();
 
         _engine.Read((instance, value) =>
         {
-            if (!IsPlausibleEngineValue(value)) return;
+            var reading = _engineGuard.Read(instance, value);
 
             string? token = ParseLuidToken(instance);
             if (token is null || !_accelerators.TryGetValue(token, out var accelerator)) return;
 
             string group = ParseEngineType(instance);
+            if (reading != EngineReading.Trusted)
+            {
+                MarkUnknown(accelerator, instance, group, reading == EngineReading.Broken);
+                return;
+            }
+
             accelerator.EngineGroups.TryGetValue(group, out double sum);
             accelerator.EngineGroups[group] = sum + value;
 
             if (watching) Watch.AddEngine(instance, accelerator.Handle.Key, group, value);
-        }, noCap100: true);
+        }, noCap100: true, onInvalid: !_engineGuard.WantsInvalid ? null : instance =>
+        {
+            // 움직이던(또는 이미 깨진) 인스턴스가 음수 차분으로 무효가 됐다 — 누적값이 거꾸로 갔다.
+            if (!_engineGuard.Invalid(instance)) return;
+            if (ParseLuidToken(instance) is { } token && _accelerators.TryGetValue(token, out var accelerator))
+                MarkUnknown(accelerator, instance, ParseEngineType(instance), broken: true);
+        });
 
+        _engineGuard.End();
+        if (_engineGuard.Count > 0 || _brokenInstances.Count > 0) _brokenInstances = _engineGuard.SnapshotBroken();
         if (watching) Watch.Commit(DateTime.UtcNow.Ticks);
 
-        var breakdown = new Dictionary<string, IReadOnlyDictionary<string, double>>(StringComparer.OrdinalIgnoreCase);
+        var breakdown = new Dictionary<string, GpuEngineBreakdown>(StringComparer.OrdinalIgnoreCase);
         Span<double> families = stackalloc double[4];   // 3D · Compute · Copy · Video
+        Span<bool> familyUnknown = stackalloc bool[4];
 
         foreach (var accelerator in _accelerators.Values)
         {
             double best = 0;
             families.Clear();
-            var types = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+            familyUnknown.Clear();
+            var types = new Dictionary<string, double?>(StringComparer.OrdinalIgnoreCase);
 
             foreach (var (group, sum) in accelerator.EngineGroups)
             {
                 double value = Math.Clamp(sum, 0, 100);
                 best = Math.Max(best, value);
-                types[group.Length == 0 ? "(unnamed)" : group] = Math.Round(value, 2);
+                bool unknown = accelerator.UnknownGroups.Contains(group) && value < 100;
+                types[GroupName(group)] = unknown ? null : Math.Round(value, 2);
 
                 // 계열 안에서는 종류끼리 최댓값이다 — 사용률 정의(그룹 안은 합, 그룹끼리는 최댓값)를
                 // 계열 단위로 옮긴 것이다. 이름을 묶는 규칙은 GpuEngineFamilies 에 있다.
@@ -763,19 +793,40 @@ public sealed class GpuProvider : ISensorProvider
                     families[FamilySlot(family)] = Math.Max(families[FamilySlot(family)], value);
             }
 
+            // 쓰지 않은 인스턴스뿐이라 합이 없는 그룹도 있다. 그 그룹은 값이 아니라 측정 불가다.
+            foreach (string group in accelerator.UnknownGroups)
+            {
+                types.TryAdd(GroupName(group), null);
+                if (GpuEngineFamilies.Classify(group) is { } family) familyUnknown[FamilySlot(family)] = true;
+            }
+
             // 벤더 경로가 이미 더 촘촘한 사용률을 넣었으면 덮어쓰지 않는다.
             if (!accelerator.HasVendorUtil)
-                writer.Write(accelerator.UtilSlot, (float)best);
+                WriteOrUnknown(writer, accelerator.UtilSlot, best, accelerator.UnknownGroups.Count > 0);
 
-            writer.Write(accelerator.Graphics3DSlot, (float)families[0]);
-            writer.Write(accelerator.ComputeSlot, (float)families[1]);
-            writer.Write(accelerator.CopySlot, (float)families[2]);
-            if (!accelerator.HasVendorMedia) writer.Write(accelerator.VideoSlot, (float)families[3]);
+            WriteOrUnknown(writer, accelerator.Graphics3DSlot, families[0], familyUnknown[0]);
+            WriteOrUnknown(writer, accelerator.ComputeSlot, families[1], familyUnknown[1]);
+            WriteOrUnknown(writer, accelerator.CopySlot, families[2], familyUnknown[2]);
+            if (!accelerator.HasVendorMedia)
+                WriteOrUnknown(writer, accelerator.VideoSlot, families[3], familyUnknown[3]);
 
-            breakdown[accelerator.Handle.Key] = types;
+            breakdown[accelerator.Handle.Key] = new GpuEngineBreakdown(
+                types,
+                accelerator.BrokenGroups.Count == 0
+                    ? []
+                    : accelerator.BrokenGroups.Select(GroupName).Order(StringComparer.OrdinalIgnoreCase).ToArray());
         }
 
         _engineBreakdown = breakdown;
+
+        void MarkUnknown(Accelerator accelerator, string instance, string group, bool broken)
+        {
+            accelerator.UnknownGroups.Add(group);
+            if (broken) accelerator.BrokenGroups.Add(group);
+            if (watching) Watch.AddUnknownEngine(instance, accelerator.Handle.Key, group);
+        }
+
+        static string GroupName(string group) => group.Length == 0 ? "(unnamed)" : group;
 
         static int FamilySlot(MetricKind kind) => kind switch
         {
@@ -786,20 +837,35 @@ public sealed class GpuProvider : ISensorProvider
         };
     }
 
+    /// <summary>
+    /// 쓰지 않은 인스턴스가 섞인 값은 하한이다. 하한이 이미 100 이면 참값도 100 이므로 그대로 쓰고,
+    /// 아니면 측정 불가로 적는다 — 0 을 쓰면 통계가 그것을 "쉬었다"로 센다.
+    /// </summary>
+    private static void WriteOrUnknown(in SampleWriter writer, int slot, double value, bool unknown)
+    {
+        if (unknown && value < 100) writer.WriteUnavailable(slot);
+        else writer.Write(slot, (float)value);
+    }
+
+    private readonly EngineCounterGuard _engineGuard = new();
+
+    // 샘플링 스레드가 통째로 갈아 끼우고 프로세스 수집 스레드가 읽는다. 깨진 것이 없으면 빈 집합 그대로다.
+    private volatile HashSet<string> _brokenInstances = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// 이 엔진 인스턴스의 카운터가 깨졌다고 이미 알아봤는가. 프로세스 표(<see cref="ProcessProvider"/>)가 쓴다 —
+    /// 그쪽은 요청이 있을 때만 켜져서 첫 응답 전에 누적값이 거꾸로 가는 것을 스스로 볼 기회가 없다.
+    /// 이쪽은 1초마다 줄곧 보고 있다.
+    /// </summary>
+    public bool IsEngineInstanceBroken(string instance) => _brokenInstances.Contains(instance);
+
     // 샘플링 스레드가 통째로 갈아 끼우고 MCP 스레드가 읽는다. 사전을 고치지 않고 새로 만든다.
-    private volatile Dictionary<string, IReadOnlyDictionary<string, double>> _engineBreakdown =
+    private volatile Dictionary<string, GpuEngineBreakdown> _engineBreakdown =
         new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>어댑터(장치 키)의 엔진 종류별 최근 사용률. <c>get_gpu_status(verbose)</c> 가 보고한다.</summary>
-    public IReadOnlyDictionary<string, double>? EngineBreakdown(string deviceKey) =>
+    public GpuEngineBreakdown? EngineBreakdown(string deviceKey) =>
         _engineBreakdown.GetValueOrDefault(deviceKey);
-
-    /// <summary>
-    /// PDH 엔진 사용률이 믿을 만한 범위인가. B580 에 OpenCL 연산을 걸자 한 인스턴스가 1.8e14 를 냈다 —
-    /// 100 으로 자르면 "그 1초는 포화"라는 거짓 표본이 된다. 한 인스턴스가 한 구간에 낼 수 있는 값은
-    /// 계상이 몰려도 몇 배 수준이므로, 그보다 크면 그 인스턴스를 이번 표본에서 뺀다.
-    /// </summary>
-    internal static bool IsPlausibleEngineValue(double value) => double.IsFinite(value) && value is >= 0 and <= 1000;
 
     /// <summary>인스턴스명 예: <c>pid_4_luid_0x00000000_0x000180A3_phys_0_eng_0_engtype_Neural</c>.</summary>
     private static string? ParseLuidToken(string instance)
@@ -950,6 +1016,12 @@ public sealed class GpuProvider : ISensorProvider
         /// <summary>절전(D3)에 들어간 것을 본 적이 있는가. 그런 장치만 매 틱 전원을 확인한다.</summary>
         public bool HasSlept { get; set; }
         public Dictionary<string, double> EngineGroups { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>이번 엔진 읽기에서 쓰지 않은 인스턴스가 있던 엔진 종류. 이번 틱 측정 불가다.</summary>
+        public HashSet<string> UnknownGroups { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>그중 카운터가 깨진(누적값이 거꾸로 간) 인스턴스가 있던 엔진 종류.</summary>
+        public HashSet<string> BrokenGroups { get; } = new(StringComparer.OrdinalIgnoreCase);
         public int Graphics3DSlot { get; init; }
         public int CopySlot { get; init; }
         public int VideoSlot { get; init; }
@@ -976,6 +1048,11 @@ public sealed class GpuProvider : ISensorProvider
         }
     }
 }
+
+/// <summary>어댑터 하나의 엔진 종류별 최근 사용률(§5.4).</summary>
+/// <param name="Types">엔진 종류 → 사용률(%). 그룹 안은 합이다. 카운터가 깨져 알 수 없으면 null.</param>
+/// <param name="Broken">카운터가 깨진 인스턴스가 있는 엔진 종류. 드라이버가 누적값을 거꾸로 돌린 경우다.</param>
+public sealed record GpuEngineBreakdown(IReadOnlyDictionary<string, double?> Types, IReadOnlyList<string> Broken);
 
 /// <summary>한 어댑터에 붙은 벤더 SDK 하나와 그 안에서의 장치 인덱스.</summary>
 internal readonly record struct VendorBinding(IVendorTelemetry Telemetry, int Handle);

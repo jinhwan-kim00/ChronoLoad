@@ -317,7 +317,7 @@ public sealed class ChronoLoadTools(McpContext ctx)
                     vendor = d.Info.Vendor,
                     metrics = d.Kinds.OrderBy(k => k).Select(k => k.ToString()).ToArray(),
                     // GPU·NPU 만. AI 작업이 이 어댑터의 어느 지표에 실리는지 — 제조사마다 다르다.
-                    aiSignals = d.Info.Class == DeviceClass.Gpu ? AiSignals.For(d) : null,
+                    aiSignals = d.Info.Class == DeviceClass.Gpu ? AiSignals.For(d, ctx.EngineBreakdown?.Invoke(d.Key)?.Broken) : null,
                     info = d.Info.Extra,
                 }).ToArray(),
         };
@@ -370,6 +370,8 @@ public sealed class ChronoLoadTools(McpContext ctx)
     {
         double? dedicated = MetricReader.Latest(ctx, d, MetricKind.GpuDedicated);
         double? capacity = ParseCapacity(d);
+        var engines = ctx.EngineBreakdown?.Invoke(d.Key);
+        var broken = engines?.Broken is { Count: > 0 } b ? b : null;
 
         return new
         {
@@ -405,10 +407,13 @@ public sealed class ChronoLoadTools(McpContext ctx)
             availability = d.Availability.ToString().ToLowerInvariant(),
             stale = MetricReader.IsStale(ctx, d),
             // AI 작업이 어느 지표에 실리는가. 같은 추론이 GPU 마다 다른 엔진으로 잡힌다(§5.4).
-            aiSignals = AiSignals.For(d),
+            aiSignals = AiSignals.For(d, broken),
+            // 드라이버가 누적값을 거꾸로 돌려 PDH 카운터가 깨진 엔진 종류. 그 계열은 0 이 아니라 null(측정 불가)이다.
+            // verbose 가 아니어도 낸다 — computePercent 가 null 인 이유가 여기 있다.
+            brokenEngineCounters = broken,
             engines = verbose ? EngineFamilies(d) : null,
-            // 엔진 종류(engtype)별 원값. 그룹 안은 합, 사용률 정의는 그룹끼리 최댓값이다.
-            engineTypes = verbose ? ctx.EngineBreakdown?.Invoke(d.Key) : null,
+            // 엔진 종류(engtype)별 원값. 그룹 안은 합, 사용률 정의는 그룹끼리 최댓값이다. 이번 값을 못 쓴 종류는 null(측정 불가).
+            engineTypes = verbose ? engines?.Types : null,
             info = verbose ? d.Info.Extra : null,
         };
     }

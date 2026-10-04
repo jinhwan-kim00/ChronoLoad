@@ -14,7 +14,7 @@ namespace ChronoLoad.Mcp;
 public sealed class ProcessTools(McpContext ctx)
 {
     [McpServerTool(Name = "list_processes")]
-    [Description("무엇이 자원을 쓰고 있는지. CPU·메모리·GPU·GPU 메모리·디스크 I/O 로 정렬할 수 있다. gpu·gpuMemory·diskIo 정렬은 그 값이 0 인 프로세스를 뺀다. 한동안 부르지 않았으면 첫 실측까지 1초 기다린다.")]
+    [Description("무엇이 자원을 쓰고 있는지. CPU·메모리·GPU·GPU 메모리·디스크 I/O 로 정렬할 수 있다. gpu·gpuMemory·diskIo 정렬은 그 값이 0 인 프로세스를 뺀다 — 단 GPU 엔진 값을 측정할 수 없던 프로세스(gpuUnmeasured)는 빼지 않고 맨 앞에 둔다. 한동안 부르지 않았으면 첫 실측까지 1초 기다린다.")]
     public async Task<object> ListProcesses(
         [Description("정렬 기준: cpu | memory | gpu | gpuMemory | diskIo")] string sortBy = "cpu",
         [Description("이 어댑터 키의 GPU 사용만으로 정렬한다. gpu · gpuMemory 정렬에만 쓰인다.")]
@@ -39,6 +39,9 @@ public sealed class ProcessTools(McpContext ctx)
             ? r.TotalGpuPercent
             : Lookup(r.GpuByAdapter, adapterKey);
 
+        bool GpuUnknown(ProcessRow r) => r.GpuUnmeasured is { Count: > 0 } u
+            && (adapterKey is null || u.Keys.Any(k => string.Equals(k, adapterKey, StringComparison.OrdinalIgnoreCase)));
+
         double GpuMemoryOf(ProcessRow r) => adapterKey is null
             ? r.TotalGpuMemoryBytes
             : Lookup(r.GpuMemoryByAdapter, adapterKey);
@@ -56,18 +59,24 @@ public sealed class ProcessTools(McpContext ctx)
         // GPU·디스크로 정렬하면서 0 인 프로세스까지 내보내면 동률이 PID 순으로 뒤따라 붙는다 —
         // 쓰지 않는 프로세스가 "쓰는 순위"에 끼어 보인다. 그 축에서 0 인 것은 뺀다.
         // CPU·메모리는 거의 모두가 조금씩은 쓰므로 빼지 않는다.
+        // 단 GPU 정렬에서 엔진 값을 못 쓴(gpuUnmeasured) 프로세스는 남긴다 — 0 이 아니라 모르는 것이고,
+        // GPU 를 다 쓰는 프로세스가 그렇게 보이기도 한다(Arc 130V 의 OpenVINO 추론).
         bool sparse = sortBy.ToLowerInvariant() is "gpu" or "gpumemory" or "diskio";
+        bool keepUnknownGpu = sortBy.Equals("gpu", StringComparison.OrdinalIgnoreCase);
         int excluded = 0;
         if (sparse)
         {
-            var active = rows.Where(r => key(r) > 0).ToArray();
+            var active = rows.Where(r => key(r) > 0 || (keepUnknownGpu && GpuUnknown(r))).ToArray();
             excluded = rows.Count - active.Length;
             rows = active;
         }
 
+        // GPU 정렬에서 엔진 값을 못 쓴 프로세스는 맨 앞에 둔다. 값을 몰라 순위를 매길 수 없는데,
+        // 0 으로 줄 세우면 맨 뒤로 밀려 limit 밖으로 사라진다 — 130V 에서 GPU 를 다 쓰던 추론 프로세스가 그랬다.
         // 동률은 다른 자원을 많이 쓰는 쪽을 앞에 둔다. PID 순은 아무 뜻이 없다.
         var sorted = rows
-            .OrderByDescending(key)
+            .OrderByDescending(r => keepUnknownGpu && GpuUnknown(r))
+            .ThenByDescending(key)
             .ThenByDescending(r => r.CpuPercent ?? -1)
             .ThenByDescending(r => r.WorkingSetBytes);
 
@@ -125,6 +134,8 @@ public sealed class ProcessTools(McpContext ctx)
                 gpuMemoryByAdapter = row.GpuMemoryByAdapter.ToDictionary(
                     kv => kv.Key, kv => ByteValue.From(kv.Value)),
                 gpuByEngine = row.GpuByEngine,
+                // 이번 수집에서 값을 못 쓴 어댑터·엔진(상한 초과·깨진 카운터). 위 두 표에서 빠진 것은 0 이 아니라 측정 불가다.
+                gpuUnmeasured = Unmeasured(row),
             },
         };
     }
@@ -143,5 +154,10 @@ public sealed class ProcessTools(McpContext ctx)
         // 여러 어댑터를 쓰면 gpuPercent 는 그중 최댓값이다. 어댑터별 값은 이쪽에 있다.
         gpuMemory = ByteValue.From(r.TotalGpuMemoryBytes),
         gpuByAdapter = r.GpuByAdapter.Count == 0 ? null : r.GpuByAdapter,
+        // GPU 를 쓰는데 값을 못 써 gpuPercent 에 잡히지 않은 어댑터·엔진. 있으면 gpuPercent 는 하한이다.
+        gpuUnmeasured = Unmeasured(r),
     };
+
+    private static IReadOnlyDictionary<string, IReadOnlyList<string>>? Unmeasured(ProcessRow r) =>
+        r.GpuUnmeasured is { Count: > 0 } u ? u : null;
 }

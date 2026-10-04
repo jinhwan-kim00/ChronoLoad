@@ -5,8 +5,14 @@ namespace ChronoLoad.Sensors;
 
 /// <summary>프로세스 한 줄. 어댑터 키별로 GPU 사용률과 메모리를 분해해 담는다.</summary>
 /// <remarks>
+/// <para>
 /// CPU·디스크는 두 수집의 차분이라 <b>직전 수집에 없던 프로세스는 null</b> 이다. 0 이 아니다 —
 /// 0 은 "쉬고 있다"이고 null 은 "아직 모른다"이다.
+/// </para>
+/// <para>
+/// GPU 도 같다. 엔진 값을 못 쓴 어댑터·엔진 종류(<see cref="GpuUnmeasured"/>)는 <see cref="GpuByAdapter"/>·
+/// <see cref="GpuByEngine"/> 에서 빠진다. 남은 인스턴스의 값이 이미 100 이면 그것이 참값이라 남긴다.
+/// </para>
 /// </remarks>
 public sealed record ProcessSample(
     int Pid,
@@ -17,7 +23,12 @@ public sealed record ProcessSample(
     IReadOnlyDictionary<string, double> GpuByAdapter,
     IReadOnlyDictionary<string, long> GpuMemoryByAdapter,
     IReadOnlyDictionary<string, double> GpuByEngine,
-    int ParentPid);
+    int ParentPid)
+{
+    /// <summary>어댑터 키 → 이번 수집에서 측정할 수 없던 엔진 종류(상한 초과·깨진 카운터). 없으면 비어 있다.</summary>
+    public IReadOnlyDictionary<string, IReadOnlyList<string>> GpuUnmeasured { get; init; } =
+        new Dictionary<string, IReadOnlyList<string>>();
+}
 
 /// <summary>
 /// 프로세스 표 수집기 (§5.6). <b>MCP 전용이며 요청이 있을 때만 돈다.</b>
@@ -69,6 +80,13 @@ public sealed class ProcessProvider : IDisposable
     private bool _pdhOpened;
 
     public DateTimeOffset? SampledAt { get { lock (_gate) return _sampledAt; } }
+
+    /// <summary>
+    /// 줄곧 엔진을 보고 있는 쪽(<see cref="GpuProvider.IsEngineInstanceBroken"/>)이 이미 깨졌다고 알아본 인스턴스인가.
+    /// 이 수집기는 요청이 있을 때만 켜져서 첫 응답 전에 누적값이 거꾸로 가는 것을 스스로 볼 기회가 없다 —
+    /// 130V 의 깨진 Neural 인스턴스가 첫 표에 GPU 100% 로 나왔다.
+    /// </summary>
+    public Func<string, bool>? KnownBrokenEngine { get; init; }
 
     /// <summary>지금 수집이 돌고 있는가. <c>describe_capabilities</c> 가 보고한다.</summary>
     public bool IsCollecting => _timer is not null;
@@ -158,7 +176,7 @@ public sealed class ProcessProvider : IDisposable
         var rows = NtProcess.Enumerate();
         if (rows.Count == 0) return;
 
-        var (gpuByPid, memoryByPid, engineByPid) = ReadGpuPerProcess();
+        var (gpuByPid, memoryByPid, engineByPid, unmeasuredByPid) = ReadGpuPerProcess();
 
         var samples = new List<ProcessSample>(rows.Count);
         var seen = new HashSet<int>(rows.Count);
@@ -195,7 +213,10 @@ public sealed class ProcessProvider : IDisposable
                 gpuByPid.GetValueOrDefault(row.Pid) ?? Empty<double>(),
                 memoryByPid.GetValueOrDefault(row.Pid) ?? Empty<long>(),
                 engineByPid.GetValueOrDefault(row.Pid) ?? Empty<double>(),
-                row.ParentPid));
+                row.ParentPid)
+            {
+                GpuUnmeasured = unmeasuredByPid.GetValueOrDefault(row.Pid) ?? Empty<IReadOnlyList<string>>(),
+            });
         }
 
         // 끝난 프로세스의 기준선은 버린다. 안 그러면 PID 가 재사용될 때 엉뚱한 차분이 나온다.
@@ -213,20 +234,45 @@ public sealed class ProcessProvider : IDisposable
     /// <c>GPU Engine(pid_1234_luid_0x..._phys_0_eng_0_engtype_3D)</c> 형태의 인스턴스명을
     /// PID · 어댑터 LUID · 엔진 종류로 쪼갠다.
     /// </summary>
+    /// <remarks>
+    /// 쓰지 않은 인스턴스(<see cref="EngineCounterGuard"/> — 상한을 넘은 값, 깨진 카운터)는 따로 모은다. 그 어댑터·엔진 종류의
+    /// 남은 값이 100 에 못 미치면 표에서 빼고 <c>GpuUnmeasured</c> 에 적는다 — 0 으로 남기면 GPU 를 다 쓰는
+    /// 프로세스가 "GPU 를 안 쓴다"로 보인다. Arc 130V 의 OpenVINO 추론이 실제로 그렇게 보였다.
+    /// </remarks>
     private (Dictionary<int, Dictionary<string, double>>,
              Dictionary<int, Dictionary<string, long>>,
-             Dictionary<int, Dictionary<string, double>>) ReadGpuPerProcess()
+             Dictionary<int, Dictionary<string, double>>,
+             Dictionary<int, Dictionary<string, IReadOnlyList<string>>>) ReadGpuPerProcess()
     {
         Dictionary<int, Dictionary<string, double>> byAdapter = [];
         Dictionary<int, Dictionary<string, long>> byMemory = [];
         Dictionary<int, Dictionary<string, double>> byEngine = [];
+        Dictionary<int, Dictionary<string, IReadOnlyList<string>>> unmeasured = [];
 
-        if (_query is null || !_query.Collect()) return (byAdapter, byMemory, byEngine);
+        if (_query is null || !_query.Collect()) return (byAdapter, byMemory, byEngine, unmeasured);
 
-        _engine?.Read((instance, value) =>
+        Dictionary<int, HashSet<(string Luid, string EngineType)>>? lost = null;
+        void MarkUnknown(string instance)
         {
             if (!TryParse(instance, out int pid, out string luid, out string engineType)) return;
-            if (value <= 0 || !GpuProvider.IsPlausibleEngineValue(value)) return;
+            lost ??= [];
+            (lost.TryGetValue(pid, out var set) ? set : lost[pid] = []).Add((luid, engineType));
+        }
+
+        _engineGuard.Begin();
+        // 100 으로 자르지 않고 읽는다. PDH 가 자르면 279,947% 같은 쓰레기가 100 이 되어 상한 판정을 그대로 통과한다.
+        // 자르는 것은 판정을 거친 뒤 여기서 한다.
+        var knownBroken = KnownBrokenEngine;
+        _engine?.Read((instance, value) =>
+        {
+            if (_engineGuard.Read(instance, value) != EngineReading.Trusted || knownBroken?.Invoke(instance) == true)
+            {
+                MarkUnknown(instance);
+                return;
+            }
+
+            if (value <= 0 || !TryParse(instance, out int pid, out string luid, out string engineType)) return;
+            value = Math.Min(value, 100);
 
             // 어댑터별로는 엔진 중 최댓값을 쓴다. 엔진 사용률을 더하면 200% 가 나온다 —
             // 3D 와 Copy 가 동시에 도는 것은 두 배로 바쁜 것이 아니다.
@@ -234,8 +280,14 @@ public sealed class ProcessProvider : IDisposable
             adapters[luid] = Math.Max(adapters.GetValueOrDefault(luid), value);
 
             var engines = byEngine.TryGetValue(pid, out var e) ? e : byEngine[pid] = Empty<double>();
-            engines[engineType] = engines.GetValueOrDefault(engineType) + value;
+            engines[engineType] = Math.Min(100, engines.GetValueOrDefault(engineType) + value);
+        }, noCap100: true, onInvalid: !_engineGuard.WantsInvalid && knownBroken is null ? null : instance =>
+        {
+            if (_engineGuard.Invalid(instance) || knownBroken?.Invoke(instance) == true) MarkUnknown(instance);
         });
+        _engineGuard.End();
+
+        if (lost is not null) DropUnmeasured(lost, byAdapter, byEngine, unmeasured);
 
         _processMemory?.Read((instance, value) =>
         {
@@ -246,8 +298,39 @@ public sealed class ProcessProvider : IDisposable
             memory[luid] = memory.GetValueOrDefault(luid) + (long)value;
         });
 
-        return (byAdapter, byMemory, byEngine);
+        return (byAdapter, byMemory, byEngine, unmeasured);
     }
+
+    /// <summary>
+    /// 쓰지 않은 인스턴스가 섞인 어댑터·엔진 종류를 표에서 빼고 측정 불가 목록에 적는다.
+    /// 남은 값이 이미 100 이면 참값도 100 이므로 남긴다.
+    /// </summary>
+    private static void DropUnmeasured(
+        Dictionary<int, HashSet<(string Luid, string EngineType)>> lost,
+        Dictionary<int, Dictionary<string, double>> byAdapter,
+        Dictionary<int, Dictionary<string, double>> byEngine,
+        Dictionary<int, Dictionary<string, IReadOnlyList<string>>> unmeasured)
+    {
+        foreach (var (pid, set) in lost)
+        {
+            var adapters = byAdapter.GetValueOrDefault(pid);
+            var engines = byEngine.GetValueOrDefault(pid);
+            var types = Empty<IReadOnlyList<string>>();
+
+            foreach (var group in set.GroupBy(b => b.Luid, StringComparer.OrdinalIgnoreCase))
+            {
+                if (adapters is not null && adapters.GetValueOrDefault(group.Key) < 100) adapters.Remove(group.Key);
+                types[group.Key] = group.Select(b => b.EngineType).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+
+                foreach (var (_, engineType) in group)
+                    if (engines is not null && engines.GetValueOrDefault(engineType) < 100) engines.Remove(engineType);
+            }
+
+            unmeasured[pid] = types;
+        }
+    }
+
+    private readonly EngineCounterGuard _engineGuard = new();
 
     private static bool TryParse(string instance, out int pid, out string luid, out string engineType)
     {

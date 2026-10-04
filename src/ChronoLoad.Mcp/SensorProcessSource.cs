@@ -28,6 +28,7 @@ public sealed class SensorProcessSource(ProcessProvider provider) : IProcessSour
     {
         ParentPid = s.ParentPid,
         GpuByEngine = s.GpuByEngine,
+        GpuUnmeasured = s.GpuUnmeasured,
     };
 
     /// <summary>

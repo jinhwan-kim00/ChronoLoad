@@ -29,10 +29,10 @@ public sealed class McpContext(MetricRegistry registry, SampleEngine engine)
     public Func<IReadOnlyDictionary<string, string>>? TelemetryLayers { get; init; }
 
     /// <summary>
-    /// 어댑터의 엔진 종류(engtype)별 최근 사용률. <c>get_gpu_status(verbose)</c> 가 보고한다.
+    /// 어댑터의 엔진 종류(engtype)별 최근 사용률과 카운터가 깨진 종류. <c>get_gpu_status</c> 가 보고한다.
     /// 인자는 장치 키, 모르면 null.
     /// </summary>
-    public Func<string, IReadOnlyDictionary<string, double>?>? EngineBreakdown { get; init; }
+    public Func<string, ChronoLoad.Sensors.GpuEngineBreakdown?>? EngineBreakdown { get; init; }
 
     /// <summary>어댑터의 최근 클럭 제한 사유. 인자는 장치 키, 벤더가 주지 않으면 null.</summary>
     public Func<string, GpuLimitReasons?>? LimitReasons { get; init; }
@@ -69,6 +69,12 @@ public sealed record ProcessRow(
 
     /// <summary>엔진 종류별 사용률(3D·Compute·Copy·Video·Neural). 상세 조회에서만 채운다.</summary>
     public IReadOnlyDictionary<string, double>? GpuByEngine { get; init; }
+
+    /// <summary>
+    /// 어댑터 키 → 이번 수집에서 측정할 수 없던 엔진 종류(값이 상한을 넘었거나 카운터가 깨졌다). 그 어댑터·엔진은 위 표에서 빠져 있다 —
+    /// 0 이 아니라 모르는 것이다.
+    /// </summary>
+    public IReadOnlyDictionary<string, IReadOnlyList<string>>? GpuUnmeasured { get; init; }
 
     public double TotalGpuPercent => GpuByAdapter.Count == 0 ? 0 : GpuByAdapter.Values.Max();
     public long TotalGpuMemoryBytes => GpuMemoryByAdapter.Values.Sum();

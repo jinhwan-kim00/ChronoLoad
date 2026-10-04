@@ -28,7 +28,38 @@ public sealed record AiSignals(
     [property: JsonPropertyName("supporting")] string[] Supporting,
     [property: JsonPropertyName("note")] string Note)
 {
-    public static AiSignals For(DeviceHandle device)
+    /// <param name="device">어댑터.</param>
+    /// <param name="brokenEngines">
+    /// 지금 PDH 카운터가 깨져 있는 엔진 종류(<c>GpuEngineBreakdown.Broken</c>). 그 계열 지표는 측정 불가라
+    /// <c>primary</c> 에서 빼고, 왜 뺐는지를 <c>note</c> 에 덧붙인다.
+    /// </param>
+    public static AiSignals For(DeviceHandle device, IReadOnlyList<string>? brokenEngines = null)
+    {
+        var signals = ForDevice(device);
+        if (brokenEngines is not { Count: > 0 }) return signals;
+
+        // 깨진 엔진이 속한 계열. 계열에 넣지 않는 엔진(GSC 등)이 깨진 것은 primary 와 무관하다.
+        var lost = brokenEngines
+            .Select(GpuEngineFamilies.Classify)
+            .OfType<MetricKind>()
+            .Select(k => k.ToString())
+            .Distinct()
+            .ToArray();
+
+        string[] primary = signals.Primary.Except(lost).ToArray();
+        string instead = primary.FirstOrDefault(p => p != MetricKind.GpuUtil.ToString()) ?? primary.FirstOrDefault() ?? "GpuUtil";
+
+        string note = signals.Note +
+            $" 지금 PDH 엔진 카운터가 깨져 있다: {string.Join(", ", brokenEngines)} — 드라이버가 누적 실행 시간을 거꾸로 돌려" +
+            " 수만% 나 음수 차분이 나온다." +
+            (lost.Length > 0
+                ? $" 그래서 {string.Join(", ", lost)} 는 측정 불가(null)로 비우고 primary 에서 뺐다. 0 이 아니다 — {instead} 로 판단한다."
+                : " 계열 지표에는 영향이 없다.");
+
+        return signals with { Primary = primary, Note = note };
+    }
+
+    private static AiSignals ForDevice(DeviceHandle device)
     {
         var info = device.Info;
         bool? hags = info.Extra.GetValueOrDefault("hardwareScheduling") switch

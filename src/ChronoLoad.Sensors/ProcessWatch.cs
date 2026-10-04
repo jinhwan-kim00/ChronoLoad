@@ -112,15 +112,17 @@ public sealed class ProcessWatch : IDisposable
     internal void BeginEngines()
     {
         lock (_gate)
-            foreach (var w in _watched.Values) w.Pending.Clear();
+            foreach (var w in _watched.Values)
+            {
+                w.Pending.Clear();
+                w.PendingUnknown.Clear();
+            }
     }
 
     /// <summary>엔진 인스턴스 하나. 인스턴스명이 <c>pid_N_…</c> 로 시작할 때만 PID 를 읽는다.</summary>
     internal void AddEngine(string instance, string adapterKey, string engineType, double value)
     {
-        if (!instance.StartsWith("pid_", StringComparison.OrdinalIgnoreCase)) return;
-        int end = instance.IndexOf('_', 4);
-        if (end < 0 || !int.TryParse(instance.AsSpan(4, end - 4), out int pid)) return;
+        if (ParsePid(instance) is not { } pid) return;
 
         lock (_gate)
         {
@@ -128,6 +130,28 @@ public sealed class ProcessWatch : IDisposable
             var key = (adapterKey, engineType);
             w.Pending[key] = w.Pending.GetValueOrDefault(key) + value;
         }
+    }
+
+    /// <summary>
+    /// 값을 쓰지 않은 엔진 인스턴스(<see cref="EngineCounterGuard"/> — 상한을 넘은 값, 깨진 카운터). 그 프로세스의 그 계열은 이번 점에서 측정 불가다 —
+    /// 남은 인스턴스가 이미 100 이 아니라면.
+    /// </summary>
+    internal void AddUnknownEngine(string instance, string adapterKey, string engineType)
+    {
+        if (ParsePid(instance) is not { } pid) return;
+
+        lock (_gate)
+        {
+            if (!_watched.TryGetValue(pid, out var w) || w.Ended) return;
+            w.PendingUnknown.Add((adapterKey, engineType));
+        }
+    }
+
+    private static int? ParsePid(string instance)
+    {
+        if (!instance.StartsWith("pid_", StringComparison.OrdinalIgnoreCase)) return null;
+        int end = instance.IndexOf('_', 4);
+        return end >= 0 && int.TryParse(instance.AsSpan(4, end - 4), out int pid) ? pid : null;
     }
 
     /// <summary>한 점을 적는다. 엔진은 계열 안 최댓값, CPU 는 직전 점과의 차분이다.</summary>
@@ -163,6 +187,14 @@ public sealed class ProcessWatch : IDisposable
                     if (GpuEngineFamilies.Classify(engineType) is not { } family) continue;
                     var key = (adapter, family);
                     families[key] = Math.Max(families.GetValueOrDefault(key), (float)Math.Clamp(sum, 0, 100));
+                }
+
+                // 쓰지 않은 인스턴스가 섞인 계열은 남은 값이 하한일 뿐이다. 100 에 닿지 않았으면 NaN(측정 불가)이다.
+                foreach (var (adapter, engineType) in w.PendingUnknown)
+                {
+                    if (GpuEngineFamilies.Classify(engineType) is not { } family) continue;
+                    var key = (adapter, family);
+                    if (!families.TryGetValue(key, out float known) || known < 100) families[key] = float.NaN;
                 }
 
                 w.Append(nowUtcTicks, cpu, workingSet, families);
@@ -204,6 +236,7 @@ public sealed class ProcessWatch : IDisposable
         public long LastStamp { get; set; }
 
         public Dictionary<(string Adapter, string EngineType), double> Pending { get; } = [];
+        public HashSet<(string Adapter, string EngineType)> PendingUnknown { get; } = [];
 
         public List<long> Stamps { get; } = [];
         public List<float> Cpu { get; } = [];

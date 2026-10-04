@@ -46,7 +46,11 @@ internal sealed class PdhCounterArray : IDisposable
     /// 전 인스턴스를 읽어 콜백에 흘린다. 이름 문자열은 PDH 버퍼를 가리키므로
     /// 콜백 밖으로 들고 나가면 안 된다 — 필요하면 콜백 안에서 복사한다.
     /// </summary>
-    public void Read(Action<string, double> onItem, bool noCap100 = false)
+    /// <param name="onInvalid">
+    /// 상태가 무효인 인스턴스(첫 수집·음수 차분 등)를 받는다. 기본은 조용히 건너뛴다 —
+    /// 깨진 카운터를 추적하는 호출자만 넘긴다. 이름을 만들어야 하므로 공짜가 아니다.
+    /// </param>
+    public void Read(Action<string, double> onItem, bool noCap100 = false, Action<string>? onInvalid = null)
     {
         uint format = PdhNative.PdhFmtDouble | (noCap100 ? PdhNative.PdhFmtNoCap100 : 0);
 
@@ -74,7 +78,11 @@ internal sealed class PdhCounterArray : IDisposable
         {
             var item = Marshal.PtrToStructure<PdhFmtCounterValueItem>(_buffer + i * stride);
             if (item.NamePtr == 0) continue;
-            if (item.CStatus is not (0 or 1)) continue;
+            if (item.CStatus is not (0 or 1))
+            {
+                if (onInvalid is not null && Marshal.PtrToStringUni(item.NamePtr) is { } invalid) onInvalid(invalid);
+                continue;
+            }
 
             string? name = Marshal.PtrToStringUni(item.NamePtr);
             if (name is not null) onItem(name, item.Value);
