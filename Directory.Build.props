@@ -3,11 +3,13 @@
   <PropertyGroup>
     <LangVersion>latest</LangVersion>
     <!--
-      정보 창과 파일 속성이 보여주는 값. 기능 단위로 올린다
-      (M6 MCP → 0.9, M7 안정화 + M8 스냅샷 창 → 1.0).
+      정보 창·파일 속성·MCP 서버 정보가 보여주는 값. 문서 버전(PROJECT.md 머리말 = CHANGE_LOG.md 마지막 항목)과
+      같아야 한다 — VersionConsistencyTests 가 지킨다.
+      주.부.수정: 마일스톤에서 앞 두 자리를 올리고(M6 MCP → 0.9, M7 안정화 + M8 스냅샷 창 → 1.0),
+      개정 이력 한 항목마다 세 번째 자리를 올린다. 배포 폴더는 앞 두 자리, 압축 파일은 전체를 이름에 쓴다.
       Version 하나가 AssemblyVersion·FileVersion·InformationalVersion 을 모두 끌고 간다.
     -->
-    <Version>1.0.0</Version>
+    <Version>1.0.48</Version>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <!-- WPF 텍스트 레이아웃이 실제 컬처를 요구한다. InvariantGlobalization 은 켤 수 없다. -->

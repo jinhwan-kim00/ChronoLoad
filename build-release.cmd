@@ -7,7 +7,9 @@ rem
 rem   build-release            자체 포함(기본). 받는 사람이 .NET 을 설치하지 않아도 된다
 rem   build-release framework  런타임 의존. 용량은 작지만 .NET 10 데스크톱 런타임이 필요하다
 rem
-rem 결과: dist\ChronoLoad-<버전>-<종류>.zip  (실행 파일 + 브리지 + README + 개정 이력 + 스크린샷)
+rem 결과: dist\ChronoLoad-<주.부>-<종류>\         푼 폴더 (예: ChronoLoad-1.0-win-x64)
+rem       dist\ChronoLoad-<전체 버전>-<종류>.zip  배포용 (예: ChronoLoad-1.0.48-win-x64.zip)
+rem       둘 다 실행 파일 + 브리지 + README + 개정 이력 + 스크린샷
 
 cd /d "%~dp0"
 
@@ -40,9 +42,13 @@ for /f "delims=" %%V in ('powershell -NoProfile -Command ^
 if "%VERSION%"=="" set VERSION=0.0.0
 
 rem 푼 폴더를 결과물로 남긴다. 압축본만 내면 이 PC 에서 바로 쓰려는 사람이 매번 풀어야 하고,
-rem 바로가기를 걸 자리도 없다. 폴더 이름은 zip 과 같은 줄기라 무엇을 실행 중인지 알 수 있다.
-set STAGE=dist\ChronoLoad-%VERSION%-%TAG%
-set OUTPUT=%STAGE%.zip
+rem 바로가기를 걸 자리도 없다.
+rem 폴더 이름에는 앞 두 자리(주.부)만 쓴다. 수정 번호마다 폴더가 바뀌면 걸어 둔 바로가기가 매번 끊긴다 —
+rem 같은 계열의 새 빌드는 같은 폴더를 덮어쓴다. 실행 중인 판이 정확히 몇인지는 정보 창이 보여준다.
+rem 압축 파일은 전체 버전을 쓴다. 남에게 준 것이 어느 수정판인지 이름만으로 알아야 하고, 판마다 따로 남는다.
+for /f "tokens=1,2 delims=." %%A in ("%VERSION%") do set SERIES=%%A.%%B
+set STAGE=dist\ChronoLoad-%SERIES%-%TAG%
+set OUTPUT=dist\ChronoLoad-%VERSION%-%TAG%.zip
 
 echo.
 echo   ChronoLoad %VERSION%  (%MODE%)

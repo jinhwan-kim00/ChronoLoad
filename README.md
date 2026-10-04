@@ -211,8 +211,10 @@ build-release framework    :: 런타임 의존 — 작지만 .NET 10 데스크�
 
 | | 쓰임 |
 |---|---|
-| `ChronoLoad-<버전>-<종류>\` | **푼 그대로.** 이 PC 에서 그냥 쓸 때는 안의 `ChronoLoad.exe` 에 바로가기를 만든다 |
-| `ChronoLoad-<버전>-<종류>.zip` | 남에게 줄 때 |
+| `ChronoLoad-<주.부>-<종류>\` | **푼 그대로.** 이 PC 에서 그냥 쓸 때는 안의 `ChronoLoad.exe` 에 바로가기를 만든다. 이름에 앞 두 자리만 들어가서(`ChronoLoad-1.0-win-x64`) 수정판을 새로 빌드해도 같은 폴더를 덮어쓴다 — 바로가기가 끊기지 않는다 |
+| `ChronoLoad-<전체 버전>-<종류>.zip` | 남에게 줄 때. 이름에 전체 버전이 들어가(`ChronoLoad-1.0.48-win-x64.zip`) 판마다 따로 남는다 |
+
+실행 중인 판의 정확한 버전은 정보 창에 나온다. 문서 버전(`PROJECT.md` 머리말·`CHANGE_LOG.md` 마지막 항목)과 같다.
 
 둘 다 실행 파일, MCP 브리지, 이 README(스크린샷 포함), 개정 이력을 담는다.
 
