@@ -2,7 +2,7 @@
 
 > GPU 워크로드 중심의 실시간 시스템 모니터. WPF 세로형 위젯 + MCP 서버.
 
-- **문서 버전**: 1.46 — 개정 이력은 [`CHANGE_LOG.md`](CHANGE_LOG.md)
+- **문서 버전**: 1.47 — 개정 이력은 [`CHANGE_LOG.md`](CHANGE_LOG.md)
 - **최초 작성**: 2026-09-23 · **최종 갱신**: 2026-10-04
 - **대상 런타임**: .NET 10 (`net10.0-windows`), Windows 10 20H2 이상 / Windows 11
 - **UX 시각 설계서**: [`docs/ux-design.html`](docs/ux-design.html) — 브라우저로 열면 라이브 목업이 동작합니다
@@ -1682,9 +1682,9 @@ WPF 의 `Microsoft.Win32.SaveFileDialog` 는 속을 셸의 `IFileSaveDialog` 로
 | `get_disk_status` | `diskIndex?` | 읽기/쓰기 B/s, 활성 %, 큐, 응답 ms, **매체(SSD/HDD)**, 버스, 모델·용량 |
 | `get_network_interfaces` | `includeTunnels?` | 인터페이스별 이름/**종류**/링크 속도/RX·TX B/s/누적. Wi-Fi는 SSID·신호·대역. **터널은 기본 제외**이며 포함 시 `countedTwiceOn` 필드로 하위 인터페이스를 명시 |
 | `get_metric_history` | `metric`, `deviceKey?`, `windowSeconds`(≤900), `maxPoints`(≤500) | **실측 표본만**, 시각과 함께. `startAt` + `offsetsMs[i]` 가 점의 시각이고 `measuredPeriodMs` 가 그 지표의 실제 갱신 주기다. 표본이 `maxPoints` 이하면 `raw`(점 하나 = 실측 하나), 넘치면 `bucketed` — 시간을 **정확히 `maxPoints` 칸으로 등분**해 칸마다 `avg`·`min`·`max`·`samples`. 빈 칸은 `null` |
-| `get_stats_since_reset` | `metric?`, `deviceKey?`, `saturationThreshold?`(기본 90) | `{ resetAt, elapsedSeconds, sampleCount, avg, min, max, p50, p95, p99, quantilesExact, stdDev }`. 백분율 지표는 `saturationThreshold`·`saturatedFraction` 을 더한다(§7.3) |
+| `get_stats_since_reset` | `metric?`, `deviceKey?`, `saturationThreshold?`(기본 90) | `{ resetAt, elapsedSeconds, sampleCount, avg, min, max, p50, p95, p99, quantilesExact, stdDev }`. 백분율 지표는 `saturationThreshold`·`saturatedFraction` 을 더한다(§7.3) — 표본이 없어도 둘이 함께 나오고 비율은 `null` 이다 |
 | `reset_stats` | `confirm: true`, `includePrevious?`, `metric?`, `deviceKey?` | 리셋 후 **직전 구간 통계를 반환**. 표본이 없던 지표는 빼고 그 수를 `omittedEmpty` 로. 거르는 인자는 **돌려받을 범위만** 좁힌다 — 리셋은 늘 전 지표에 걸린다. 지표마다 기준점이 다르면 구간끼리 비교할 수 없다 |
-| `list_processes` | `sortBy`(cpu\|memory\|gpu\|gpuMemory\|diskIo), `adapterKey?`, `limit`(≤50), `nameFilter?` | PID, 이름, CPU%, 워킹셋, 어댑터별 GPU%·메모리, 디스크 I/O. `gpu`·`gpuMemory`·`diskIo` 정렬은 **그 값이 0 인 프로세스를 빼고** 수를 `excludedIdle` 로 — 동률 0 이 PID 순으로 뒤따라 붙으면 쓰지 않는 프로세스가 순위에 끼어 보인다. 단 `gpu` 정렬에서 엔진 값을 측정할 수 없던(`gpuUnmeasured`) 프로세스는 빼지 않고 **맨 앞에** 둔다 — 0 이 아니라 모르는 것이고, 0 으로 줄 세우면 `limit` 밖으로 밀려 GPU 를 다 쓰는 프로세스가 사라진다. 동률은 CPU → 워킹셋 순. 어댑터 키는 대소문자를 가리지 않는다 |
+| `list_processes` | `sortBy`(cpu\|memory\|gpu\|gpuMemory\|diskIo), `adapterKey?`, `limit`(≤50), `nameFilter?` | PID, 이름, CPU%, 워킹셋, 어댑터별 GPU%·메모리, 디스크 I/O. `gpu`·`gpuMemory`·`diskIo` 정렬은 **그 값이 0 인 프로세스를 빼고** 수를 `excludedIdle` 로 — 동률 0 이 PID 순으로 뒤따라 붙으면 쓰지 않는 프로세스가 순위에 끼어 보인다. 단 `gpu` 정렬에서 엔진 값을 측정할 수 없던(`gpuUnmeasured`) 프로세스는 빼지 않고 **맨 앞에** 둔다 — 0 이 아니라 모르는 것이고, 0 으로 줄 세우면 `limit` 밖으로 밀려 GPU 를 다 쓰는 프로세스가 사라진다. 그 프로세스의 `gpuPercent` 는 `null` 이다(아는 값이 이미 100 이면 100). 동률은 CPU → 워킹셋 순. 어댑터 키는 대소문자를 가리지 않는다 |
 | `get_process_detail` | `pid` | 위 + 경로, 명령줄(권한 허용 시), 부모 PID, 어댑터별·엔진별 GPU 사용률. 엔진 값을 못 쓴 어댑터·엔진은 표에서 빠지고 `gpuUnmeasured` 에 적힌다(§5.4) |
 | `watch_process` | `pid`, `durationSeconds?`(기본 600, ≤3600) | 1초 기록 시작(§5.6). 최대 8개. 이미 감시 중이면 기한만 늘린다 |
 | `get_process_history` | `pid`, `windowSeconds?`(≤900), `maxPoints?`(≤500) | `startAt` + `offsetsMs`, `cpuPercent`·`workingSetBytes`, 어댑터·계열별 `gpu[]`. 넘치면 시간 등분해 칸마다 `avg`·`max` |
@@ -1705,9 +1705,10 @@ WPF 의 `Microsoft.Win32.SaveFileDialog` 는 속을 셸의 `IFileSaveDialog` 로
 > `isError`** 로 돌려준다 — 전송 오류로 보내면 클라이언트가 서버를 죽은 것으로 간주한다.
 
 ### 10.3 장치 변경과 MCP
-- 모든 응답에 **`devicesRevision`**(장치 집합이 바뀔 때마다 증가하는 정수)을 포함한다. 에이전트는 이 값만 비교해 "내가 알던 구성이 그대로인가"를 판단할 수 있다
+- 모든 응답에 **`devicesRevision`**(장치 **구성**이 바뀔 때마다 증가하는 정수 — 장치가 들고 나거나 채널 수·고정 정보가 바뀔 때)을 포함한다. 에이전트는 이 값만 비교해 "내가 알던 구성이 그대로인가"를 판단할 수 있다
+  - **두 리비전을 둔다.** 레지스트리의 `Revision` 은 이름 하나만 바뀌어도 올라 화면이 카드 이름을 갈아끼우는 신호(`DevicesChanged`)가 되고, `ConfigurationRevision` 이 `devicesRevision` 이다 §5.7 의 검증 재열거는 장치가 안 바뀌어도 30초마다 도는데, 그때마다 올리면 이 약속이 거짓이 된다(구현 초기에 실제로 그랬다 — §12)
   - **재열거만으로는 오르지 않는다.** §5.7 의 검증 재열거는 장치가 안 바뀌어도 30초마다 도는데, 그때마다 올리면 이 약속이 거짓이 된다(구현 초기에 실제로 그랬다 — §12)
-  - 반대로 **장치 설명이 바뀌면 오른다.** Wi-Fi 링크 속도가 재협상되면 카드 이름이 바뀌므로(`Wi-Fi 2.4Gbps` → `Wi-Fi 2.2Gbps`) 캐시를 들고 있는 에이전트는 다시 물어봐야 한다. 키·인덱스는 그대로다
+  - **표시 이름과 수시로 바뀌는 값으로도 오르지 않는다.** Wi-Fi 는 링크 속도를 몇 초마다 재협상한다 — 이 PC 실측으로 40초에 1922 ↔ 2162 ↔ 2402 Mbps 를 여섯 번 오갔다. 그 속도가 카드 이름(`Wi-Fi 2.4Gbps`)과 `info.linkSpeedBitsPerSecond` 에 들어가는데, 이것으로 올리면 30초 재열거마다 오르는 셈이라 위 약속이 Wi-Fi 기기에서는 늘 거짓이 된다. 에이전트는 장치를 이름이 아니라 키로 찾고, 이름·속도는 응답마다 새로 읽힌다. 수시로 바뀌는 `Extra` 키는 장치가 `DeviceInfo.LiveExtraKeys` 로 선언한다
 - 장치 배열의 원소는 항상 `index`와 **`key`(LUID/시리얼/인터페이스 GUID)** 를 포함한다. `index`는 순서가 바뀔 수 있으므로 **재조회 시에는 `key`를 쓴다**
 - `get_metric_history` / `get_stats_since_reset`은 `deviceKey`를 받아 인덱스 변동의 영향을 받지 않는다
 
@@ -1870,6 +1871,7 @@ Arc 130V 내장 GPU + AI Boost NPU · RAM 16GB · Windows 11 26200 ·
 | `get_metric_history` 가 `GpuTemp` 에서 **툴 호출째 실패** | 값이 없는 구간은 시리즈에 `NaN` 으로 남는데 JSON 에 `NaN` 을 쓸 수 없다. 최신값 경로만 `null` 로 걸러내고 히스토리 경로는 그대로 내보냈다 | 히스토리도 `null` 로 내보낸다. 부분 결손 구간도 NaN 만 `null` 이고 실측값은 남는다 |
 | 모든 GPU 어댑터가 영영 `stale:true` | `IsStale` 이 **한 번도 측정된 적 없는** 슬롯까지 셌다. 내장 GPU 는 온도 센서가 0개라 그 슬롯이 영구히 비어 있다 | 실측 이력이 없는 슬롯은 세지 않는다. 없는 값은 `null` 로 이미 말하고 있다 |
 | `devicesRevision` 이 **30초마다** 증가 | §5.7 검증 재열거가 같은 장치를 다시 등록할 때 `Register` 가 무조건 리비전을 올렸다. §10.3 의 "이 값만 비교하면 구성이 그대로인지 알 수 있다"가 거짓이 된다 | 내용이 실제로 달라졌을 때만 올린다. `DeviceInfo` 가 `record` 라도 `Extra` 사전은 참조 비교라 내용 비교가 따로 필요하다 |
+| `devicesRevision` 이 Wi-Fi 기기에서 **사실상 30초마다** 증가 | 위 수정 뒤에도 장치 설명이 바뀌면 올렸는데, Wi-Fi 링크 속도가 이름에 들어 있고 몇 초마다 재협상된다. 30초 재열거 때마다 속도가 달라져 있을 확률이 높았다(외부 에이전트가 12초 사이 10 → 11 을 보고) | 구성 리비전(`ConfigurationRevision`)을 따로 두어 `devicesRevision` 으로 낸다. 이름과 `LiveExtraKeys` 는 보지 않는다. Debug 앱 80초: 카드 이름이 `1.9Gbps` → `2.2Gbps` 로 바뀌는 동안 `devicesRevision` 8 그대로 |
 
 > **UI 쪽으로도 새어 나갔다.** `SampleEngine.DevicesChanged` 는 리비전이 바뀔 때 발생하므로
 > `SyncCards` 가 **30초마다** 돌고 있었다. 카드 diff 가 있어서 실제로 다시 지어지지는 않았고

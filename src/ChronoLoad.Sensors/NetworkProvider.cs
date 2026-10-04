@@ -221,6 +221,8 @@ public sealed class NetworkProvider : ISensorProvider
                 ["linkSpeedBitsPerSecond"] = row.ReceiveLinkSpeed.ToString(),
                 ["type"] = row.Type.ToString(),
             },
+            // Wi-Fi 는 링크 속도를 몇 초마다 재협상한다. 이름에도 들어가지만 구성 변경은 아니다(§10.3).
+            LiveExtraKeys = ["linkSpeedBitsPerSecond"],
         };
     }
 

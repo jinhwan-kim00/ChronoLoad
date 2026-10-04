@@ -283,6 +283,25 @@ public class McpToolTests
         Assert.Equal(90, block.GetProperty("saturationThreshold").GetDouble());
     }
 
+    /// <summary>
+    /// 표본이 하나도 없는 백분율 지표(깨진 PDH 카운터라 전부 측정 불가였던 GpuCompute 등).
+    /// 문턱만 있고 비율 필드가 빠지면 "모름"과 "이 지표엔 그런 필드가 없음"을 가를 수 없다.
+    /// </summary>
+    [Fact]
+    public void An_empty_percent_metric_still_carries_the_saturated_fraction_as_null()
+    {
+        var (ctx, registry, _) = Build();
+        new ChronoLoadTools(ctx).ResetStats(confirm: true);
+        for (int i = 0; i < 10; i++) PushAt(registry, i, [0f, float.NaN, 0f, 50f]);
+
+        var block = Json(new ChronoLoadTools(ctx).GetStatsSinceReset(metric: "GpuUtil"))
+            .GetProperty("stats")[0];
+
+        Assert.Equal(0, block.GetProperty("sampleCount").GetInt64());
+        Assert.Equal(90, block.GetProperty("saturationThreshold").GetDouble());
+        Assert.Equal(JsonValueKind.Null, block.GetProperty("saturatedFraction").ValueKind);
+    }
+
     [Fact]
     public void Reset_can_skip_or_narrow_the_previous_interval()
     {

@@ -78,18 +78,48 @@ public class MetricRegistryTests
     }
 
     [Fact]
-    public void A_renamed_device_does_advance_the_revision()
+    public void A_renamed_device_advances_the_screen_revision_but_not_the_configuration()
     {
-        // 반대쪽도 지켜야 한다. Wi-Fi 링크 속도가 바뀌면 카드 이름이 바뀌므로,
-        // 캐시를 들고 있는 에이전트는 다시 물어봐야 한다.
+        // Wi-Fi 링크 속도가 바뀌면 카드 이름이 바뀌므로 화면은 다시 그려야 한다(Revision).
+        // 하지만 구성은 그대로다 — 이 PC 의 Wi-Fi 는 40초에 링크 속도를 여섯 번 바꿨고, 그것을
+        // devicesRevision 으로 내면 30초 재열거마다 오르는 셈이라 §10.3 의 약속이 다시 깨진다.
         var registry = new MetricRegistry(64);
-        registry.Register(Net("guid:1", "Wi-Fi 2.4G"), [MetricKind.NetRx]);
+        registry.Register(WiFi("guid:1", "Wi-Fi 2.4G", 2_402_000_000), [MetricKind.NetRx]);
 
-        int settled = registry.Revision;
-        registry.Register(Net("guid:1", "Wi-Fi 1.2G"), [MetricKind.NetRx]);
+        int screen = registry.Revision, configuration = registry.ConfigurationRevision;
+        registry.Register(WiFi("guid:1", "Wi-Fi 1.9G", 1_922_000_000), [MetricKind.NetRx]);
 
-        Assert.True(registry.Revision > settled);
+        Assert.True(registry.Revision > screen);
+        Assert.Equal(configuration, registry.ConfigurationRevision);
     }
+
+    [Fact]
+    public void Stable_extra_fields_and_topology_still_advance_the_configuration()
+    {
+        var registry = new MetricRegistry(64);
+        var arc = Gpu("luid:1", "Arc") with { Extra = new Dictionary<string, string> { ["vendorId"] = "0x8086" } };
+        registry.Register(arc, [MetricKind.GpuUtil]);
+
+        int settled = registry.ConfigurationRevision;
+        registry.Register(arc with { Extra = new Dictionary<string, string> { ["vendorId"] = "0x10DE" } }, [MetricKind.GpuUtil]);
+        Assert.True(registry.ConfigurationRevision > settled);
+
+        settled = registry.ConfigurationRevision;
+        registry.Retire("luid:1", DateTime.UtcNow.Ticks);
+        Assert.True(registry.ConfigurationRevision > settled);
+
+        // 회수는 슬롯 정리일 뿐이다. 장치가 빠진 것은 은퇴 때 이미 알렸다.
+        settled = registry.ConfigurationRevision;
+        registry.PurgeRetired(DateTime.UtcNow.Ticks, TimeSpan.Zero);
+        Assert.Equal(settled, registry.ConfigurationRevision);
+    }
+
+    private static DeviceInfo WiFi(string key, string name, ulong speed) =>
+        Net(key, name) with
+        {
+            Extra = new Dictionary<string, string> { ["linkSpeedBitsPerSecond"] = speed.ToString(), ["type"] = "Ieee80211" },
+            LiveExtraKeys = ["linkSpeedBitsPerSecond"],
+        };
 
     [Fact]
     public void Extra_fields_count_as_a_change_even_though_the_record_compares_by_reference()

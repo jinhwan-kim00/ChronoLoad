@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Globalization;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 using ChronoLoad.Core.Devices;
 using ChronoLoad.Core.Metrics;
@@ -293,9 +294,14 @@ public sealed record IntervalBlock(
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public double? SaturationThreshold { get; init; }
 
-    [JsonPropertyName("saturatedFraction")]
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    [JsonIgnore]
     public double? SaturatedFraction { get; init; }
+
+    /// <summary>문턱이 있으면 표본이 없어도 <c>null</c> 로 낸다(<see cref="StatsBlock"/> 와 같다).</summary>
+    [JsonPropertyName("saturatedFraction")]
+    [JsonInclude]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    private JsonElement? SaturatedFractionWire => McpJsonHelpers.AlongWith(SaturationThreshold, SaturatedFraction);
 }
 
 /// <summary>

@@ -237,6 +237,9 @@ public class BrokenEngineCounterTests
         // 측정 불가는 0 이 아니다 — 쓰지 않는 프로세스처럼 빠지거나 맨 뒤로 밀리면 GPU 를 다 쓰는 범인이 목록에서 사라진다.
         Assert.Equal(["RSttStreamerOV.exe", "dwm.exe"], names);
         Assert.Equal(1, listed.GetProperty("excludedIdle").GetInt32());
+        // gpuPercent 만 보고 "안 쓴다"로 읽지 않게 0 이 아니라 null 이다.
+        Assert.Equal(JsonValueKind.Null, listed.GetProperty("processes")[0].GetProperty("gpuPercent").ValueKind);
+        Assert.Equal(3, listed.GetProperty("processes")[1].GetProperty("gpuPercent").GetDouble());
         Assert.Equal("Neural", listed.GetProperty("processes")[0].GetProperty("gpuUnmeasured").GetProperty(key)[0].GetString());
     }
 

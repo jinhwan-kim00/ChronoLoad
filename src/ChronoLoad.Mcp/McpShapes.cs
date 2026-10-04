@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Serialization;
 using ChronoLoad.Core.Devices;
 using ChronoLoad.Core.Formatting;
@@ -32,8 +33,9 @@ public readonly record struct ByteValue(
 /// 조용히 옛 값을 주면 에이전트가 그것을 현재로 오해한다.
 /// </param>
 /// <param name="DevicesRevision">
-/// 장치 집합이 바뀔 때마다 증가한다. 에이전트는 이 값만 비교해
-/// "내가 알던 구성이 그대로인가"를 판단한다 (§10.3).
+/// 장치 구성이 바뀔 때마다 증가한다 — 장치가 들고 나거나, 채널 수나 고정 정보가 바뀔 때.
+/// 에이전트는 이 값만 비교해 "내가 알던 구성이 그대로인가"를 판단한다 (§10.3).
+/// 표시 이름과 링크 속도처럼 수시로 바뀌는 값으로는 오르지 않는다 — 그런 값은 응답마다 새로 읽힌다.
 /// </param>
 public readonly record struct ResponseHeader(
     [property: JsonPropertyName("sampledAt")] string SampledAt,
@@ -82,9 +84,17 @@ public sealed record StatsBlock(
     /// <summary>
     /// 문턱 이상이었던 표본의 비율(0~1). 버스트형 부하에서 평균이 가리는 포화를 드러낸다.
     /// </summary>
-    [JsonPropertyName("saturatedFraction")]
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    [JsonIgnore]
     public double? SaturatedFraction { get; init; }
+
+    /// <summary>
+    /// 전선 위의 <c>saturatedFraction</c>. 문턱이 있으면 표본이 없어도 <c>null</c> 로 낸다 —
+    /// 문턱만 있고 비율 필드가 없으면 에이전트는 "비율을 모른다"와 "필드가 없는 지표"를 가르지 못한다.
+    /// </summary>
+    [JsonPropertyName("saturatedFraction")]
+    [JsonInclude]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    private JsonElement? SaturatedFractionWire => McpJsonHelpers.AlongWith(SaturationThreshold, SaturatedFraction);
 }
 
 internal static class McpJsonHelpers
@@ -94,6 +104,13 @@ internal static class McpJsonHelpers
 
     public static string Iso(long utcTicks) =>
         Iso(new DateTimeOffset(utcTicks, TimeSpan.Zero).ToLocalTime());
+
+    /// <summary>
+    /// <paramref name="anchor"/> 가 있으면 <paramref name="value"/> 를(없으면 JSON <c>null</c> 로) 내고,
+    /// 없으면 필드째 뺀다. 지표에 따라 있고 없는 필드 쌍에서 짝 하나만 빠지지 않게 한다.
+    /// </summary>
+    public static JsonElement? AlongWith(object? anchor, double? value) =>
+        anchor is null ? null : JsonSerializer.SerializeToElement(value);
 
     /// <summary>NaN·무한대는 JSON 숫자가 아니다. null 로 내보내 "값 없음"을 명시한다.</summary>
     public static double? Finite(double value) => double.IsFinite(value) ? Math.Round(value, 4) : null;

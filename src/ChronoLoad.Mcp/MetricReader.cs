@@ -57,7 +57,7 @@ internal static class MetricReader
     }
 
     public static ResponseHeader Header(McpContext ctx, bool stale = false) =>
-        new(McpJsonHelpers.Iso(ctx.Now), stale, ctx.Registry.Revision);
+        new(McpJsonHelpers.Iso(ctx.Now), stale, ctx.Registry.ConfigurationRevision);
 
     /// <summary>키 또는 인덱스로 장치를 찾는다. 키가 우선이다 (§10.3).</summary>
     public static DeviceHandle? Find(McpContext ctx, DeviceClass klass, string? key, int? index)

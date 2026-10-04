@@ -94,6 +94,7 @@ public sealed class MetricRegistry
     // 비용과 메모리가 늘지 않는다.
     private readonly List<PercentileTracker?>[] _percentiles = [[], []];
     private int _revision;
+    private int _configurationRevision;
 
     // 시간 축(§7.4). 값 링과 같은 길이지만 슬롯당이 아니라 프레임당 하나다 —
     // 모든 슬롯이 한 틱에 함께 커밋되므로 시각도 한 번만 있으면 된다(3600 × 8B = 28.8KB).
@@ -121,6 +122,17 @@ public sealed class MetricRegistry
     /// 샘플 엔진이 버퍼를 다시 잡아야 하는지 판단하는 신호다.
     /// </summary>
     public int Revision => Volatile.Read(ref _revision);
+
+    /// <summary>
+    /// 장치 <b>구성</b>이 바뀔 때만 증가한다 — 장치가 들고 나거나, 채널 수나 고정 정보가 바뀔 때.
+    /// MCP 응답의 <c>devicesRevision</c> 이다(§10.3).
+    /// </summary>
+    /// <remarks>
+    /// <see cref="Revision"/> 은 이름만 바뀌어도 오른다. 화면이 카드 이름을 갈아끼우는 신호라 그래야 한다 —
+    /// Wi-Fi 링크 속도가 카드 이름에 들어 있다. 하지만 그 속도는 몇 초마다 바뀌어서, 그것을 MCP 에 그대로 내면
+    /// 30초 검증 재열거 때마다 오르는 셈이 되어 "이 값만 비교하면 구성이 그대로인지 안다"가 거짓이 된다.
+    /// </remarks>
+    public int ConfigurationRevision => Volatile.Read(ref _configurationRevision);
 
     /// <summary>현재 살아 있는 장치들.</summary>
     public IReadOnlyList<DeviceHandle> ActiveDevices
@@ -153,11 +165,13 @@ public sealed class MetricRegistry
                 // 알 수 있다는 §10.3 의 약속이 깨진다. 실제로 그렇게 깨져 있었다.
                 bool returned = existing.RetiredAtUtcTicks is not null;
                 bool described = existing.Info.HasSameDescription(info);
+                bool configured = existing.Info.HasSameConfiguration(info);
 
                 existing.RetiredAtUtcTicks = null;
                 existing.Info = info;          // 이름·아이콘은 갱신, 데이터는 유지
 
                 if (returned || !described) Volatile.Write(ref _revision, _revision + 1);
+                if (returned || !configured) BumpConfiguration();
                 return existing;
             }
 
@@ -178,6 +192,7 @@ public sealed class MetricRegistry
             var handle = new DeviceHandle(info, index, slots);
             _devices.Add(info.Key, handle);
             Volatile.Write(ref _revision, _revision + 1);
+            BumpConfiguration();
             return handle;
         }
     }
@@ -207,6 +222,7 @@ public sealed class MetricRegistry
 
             // 슬롯 수가 바뀌면 샘플 엔진이 버퍼를 다시 잡아야 한다.
             Volatile.Write(ref _revision, _revision + 1);
+            BumpConfiguration();
             return slots;
         }
     }
@@ -222,9 +238,13 @@ public sealed class MetricRegistry
             {
                 handle.RetiredAtUtcTicks = nowUtcTicks;
                 Volatile.Write(ref _revision, _revision + 1);
+                BumpConfiguration();
             }
         }
     }
+
+    // _gate 안에서만 부른다.
+    private void BumpConfiguration() => Volatile.Write(ref _configurationRevision, _configurationRevision + 1);
 
     /// <summary>유예가 지난 장치의 슬롯을 회수한다. 회수한 장치 수를 돌려준다.</summary>
     public int PurgeRetired(long nowUtcTicks, TimeSpan? grace = null)
@@ -255,6 +275,7 @@ public sealed class MetricRegistry
                 purged++;
             }
 
+            // 구성 리비전은 올리지 않는다. 장치가 빠진 것은 은퇴 때 이미 알렸고, 회수는 슬롯 정리일 뿐이다.
             if (purged > 0) Volatile.Write(ref _revision, _revision + 1);
         }
 

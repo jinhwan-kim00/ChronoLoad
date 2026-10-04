@@ -14,7 +14,7 @@ namespace ChronoLoad.Mcp;
 public sealed class ProcessTools(McpContext ctx)
 {
     [McpServerTool(Name = "list_processes")]
-    [Description("무엇이 자원을 쓰고 있는지. CPU·메모리·GPU·GPU 메모리·디스크 I/O 로 정렬할 수 있다. gpu·gpuMemory·diskIo 정렬은 그 값이 0 인 프로세스를 뺀다 — 단 GPU 엔진 값을 측정할 수 없던 프로세스(gpuUnmeasured)는 빼지 않고 맨 앞에 둔다. 한동안 부르지 않았으면 첫 실측까지 1초 기다린다.")]
+    [Description("무엇이 자원을 쓰고 있는지. CPU·메모리·GPU·GPU 메모리·디스크 I/O 로 정렬할 수 있다. gpu·gpuMemory·diskIo 정렬은 그 값이 0 인 프로세스를 뺀다 — 단 GPU 엔진 값을 측정할 수 없던 프로세스(gpuUnmeasured)는 빼지 않고 맨 앞에 두며, 그 프로세스의 gpuPercent 는 0 이 아니라 null(모름)이다. 한동안 부르지 않았으면 첫 실측까지 1초 기다린다.")]
     public async Task<object> ListProcesses(
         [Description("정렬 기준: cpu | memory | gpu | gpuMemory | diskIo")] string sortBy = "cpu",
         [Description("이 어댑터 키의 GPU 사용만으로 정렬한다. gpu · gpuMemory 정렬에만 쓰인다.")]
@@ -150,11 +150,15 @@ public sealed class ProcessTools(McpContext ctx)
         cpuPercent = r.CpuPercent,
         workingSet = ByteValue.From(r.WorkingSetBytes),
         diskBytesPerSecond = r.DiskBytesPerSecond,
-        gpuPercent = Math.Round(r.TotalGpuPercent, 2),
+        // 측정 불가가 섞이면 아는 값은 하한일 뿐이다. 하한이 이미 100 이 아니면 null — 0 을 주면
+        // gpuPercent 만 본 에이전트가 "GPU 를 안 쓴다"로 읽는다.
+        gpuPercent = r.GpuUnmeasured is { Count: > 0 } && r.TotalGpuPercent < 100
+            ? (double?)null
+            : Math.Round(r.TotalGpuPercent, 2),
         // 여러 어댑터를 쓰면 gpuPercent 는 그중 최댓값이다. 어댑터별 값은 이쪽에 있다.
         gpuMemory = ByteValue.From(r.TotalGpuMemoryBytes),
         gpuByAdapter = r.GpuByAdapter.Count == 0 ? null : r.GpuByAdapter,
-        // GPU 를 쓰는데 값을 못 써 gpuPercent 에 잡히지 않은 어댑터·엔진. 있으면 gpuPercent 는 하한이다.
+        // GPU 를 쓰는데 값을 못 써 gpuPercent 에 잡히지 않은 어댑터·엔진. 있으면 gpuPercent 는 null 이다(아는 값이 이미 100 이면 100).
         gpuUnmeasured = Unmeasured(r),
     };
 

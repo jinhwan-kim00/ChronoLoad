@@ -84,5 +84,41 @@ public sealed record DeviceInfo(
         return true;
     }
 
+    /// <summary>
+    /// <see cref="Extra"/> 중 수시로 바뀌는 값의 키. 구성 비교(<see cref="HasSameConfiguration"/>)에서 뺀다.
+    /// </summary>
+    /// <remarks>
+    /// Wi-Fi 링크 속도가 그렇다 — 이 PC 실측으로 40초에 1922 ↔ 2162 ↔ 2402 Mbps 를 여섯 번 오갔다.
+    /// </remarks>
+    public IReadOnlyCollection<string> LiveExtraKeys { get; init; } = [];
+
+    /// <summary>
+    /// 구성이 같은가 — MCP <c>devicesRevision</c> 의 기준이다(§10.3). 표시 이름과 <see cref="LiveExtraKeys"/> 는 보지 않는다.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="HasSameDescription"/> 은 화면을 다시 그릴지의 기준이라 이름 하나만 달라도 다르다. 그 기준을 구성에
+    /// 쓰면 링크 속도가 바뀔 때마다 구성이 바뀐 것이 되어, "이 값만 비교하면 구성이 그대로인지 안다"는 약속이
+    /// Wi-Fi 가 있는 기기에서는 늘 거짓이 된다. 에이전트는 장치를 이름이 아니라 키로 찾는다.
+    /// </remarks>
+    public bool HasSameConfiguration(DeviceInfo other)
+    {
+        if (ReferenceEquals(this, other)) return true;
+
+        if (Key != other.Key || Class != other.Class || Icon != other.Icon || Vendor != other.Vendor)
+            return false;
+
+        bool Live(string key) => LiveExtraKeys.Contains(key) || other.LiveExtraKeys.Contains(key);
+
+        int count = 0;
+        foreach (var (key, value) in Extra)
+        {
+            if (Live(key)) continue;
+            if (!other.Extra.TryGetValue(key, out string? theirs) || theirs != value) return false;
+            count++;
+        }
+
+        return count == other.Extra.Keys.Count(k => !Live(k));
+    }
+
     public override string ToString() => $"{Class}:{ShortName}";
 }
