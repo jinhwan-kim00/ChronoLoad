@@ -32,7 +32,8 @@ public sealed class AboutWindow : Window
         WindowStyle = WindowStyle.None;
         ResizeMode = ResizeMode.NoResize;
         SizeToContent = SizeToContent.Height;
-        Width = 340 + ShadowMargin * 2;
+        // 값 칸(창 − 좌우 여백 36 − 이름 칸 58)이 GitHub 전체 주소(43자, 11px 고정폭 ≈ 285px)를 한 줄에 담는 폭.
+        Width = 420 + ShadowMargin * 2;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         ShowInTaskbar = false;
 
@@ -71,8 +72,8 @@ public sealed class AboutWindow : Window
         foreach (var (name, value) in Facts())
             root.Children.Add(Row(name, value, palette));
 
-        // 스킴은 빼고 보여준다. 줄이 접히면 주소가 아니라 문단처럼 읽힌다.
-        root.Children.Add(Link("GitHub", ProjectUrl, ProjectUrl.Replace("https://", ""), palette));
+        // 스킴까지 그대로 보여준다 — 그대로 옮겨 붙여도 열리는 주소다. 창 폭이 한 줄에 담기게 잡혀 있다.
+        root.Children.Add(Link("GitHub", ProjectUrl, ProjectUrl, palette));
 
         var close = new Button
         {

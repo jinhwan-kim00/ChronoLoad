@@ -9,7 +9,7 @@
       개정 이력 한 항목마다 세 번째 자리를 올린다. 배포 폴더는 앞 두 자리, 압축 파일은 전체를 이름에 쓴다.
       Version 하나가 AssemblyVersion·FileVersion·InformationalVersion 을 모두 끌고 간다.
     -->
-    <Version>1.0.48</Version>
+    <Version>1.0.49</Version>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <!-- WPF 텍스트 레이아웃이 실제 컬처를 요구한다. InvariantGlobalization 은 켤 수 없다. -->
