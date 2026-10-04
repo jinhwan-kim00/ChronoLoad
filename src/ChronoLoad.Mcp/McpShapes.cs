@@ -76,6 +76,13 @@ public sealed record StatsBlock(
     [property: JsonPropertyName("quantilesExact")] bool? QuantilesExact,
     [property: JsonPropertyName("stdDev")] double? StdDev)
 {
+    /// <summary>
+    /// 읽어 본 실측 중 값을 얻은 비율(0~1). 1 보다 작으면 나머지는 측정 불가(깨진 카운터·센서 없음·절전)였고,
+    /// 통계는 얻은 값만의 것이다. 읽어 본 적이 없으면 null.
+    /// </summary>
+    [JsonPropertyName("coverage")]
+    public double? Coverage { get; init; }
+
     /// <summary>포화 문턱(%). 백분율 지표에만 있고 나머지는 생략된다.</summary>
     [JsonPropertyName("saturationThreshold")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]

@@ -74,7 +74,7 @@ public sealed class IntervalTools(McpContext ctx)
     }
 
     [McpServerTool(Name = "get_interval_stats")]
-    [Description("두 시점 사이의 통계(평균·최소·최대·p50·p95·p99·표준편차, 백분율 지표는 포화 비율). from·to 는 마커 이름이나 ISO-8601 시각이고 to 를 생략하면 지금이다. 링 버퍼의 실측 표본으로 정확히 센다. 리셋 구간과 무관하다.")]
+    [Description("두 시점 사이의 통계(평균·최소·최대·p50·p95·p99·표준편차, 백분율 지표는 포화 비율). from·to 는 마커 이름이나 ISO-8601 시각이고 to 를 생략하면 지금이다. 링 버퍼의 실측 표본으로 정확히 센다. 리셋 구간과 무관하다. coverage 는 읽어 본 실측 중 값을 얻은 비율 — 1 보다 작으면 통계는 구간 일부만의 것이다.")]
     public object GetIntervalStats(
         [Description("시작 — 마커 이름 또는 ISO-8601 시각.")] string from,
         [Description("끝 — 마커 이름 또는 ISO-8601 시각. 생략하면 지금.")] string? to = null,
@@ -99,7 +99,10 @@ public sealed class IntervalTools(McpContext ctx)
         bool truncated = false;
         foreach (var (device, k) in Targets(kind, deviceKey))
         {
-            var block = Block(device, k, start, end, saturationThreshold, out bool cut);
+            // 지표를 콕 집어 물었으면 표본이 없어도 빈 칸으로 답한다 — 빈 목록만 주면 "그런 지표가 없다"와
+            // "있는데 구간 안에 실측이 없다(깨진 카운터라 전부 측정 불가 등)"를 가르지 못한다.
+            // 전 지표를 물을 때는 응답이 커지므로 빼고 수만 센다.
+            var block = Block(device, k, start, end, saturationThreshold, keepEmpty: kind is not null, out bool cut);
             truncated |= cut;
             if (block is null) { omitted++; continue; }
             blocks.Add(block);
@@ -157,12 +160,17 @@ public sealed class IntervalTools(McpContext ctx)
                 var w = WindowStatistics.Compute(ctx.Registry, device.SlotOf(k), segments[s].From, segments[s].To,
                     Quantiles, percent ? saturationThreshold : null);
                 truncatedSegments[s] |= w.StartsBeforeBuffer;
-                if (w.Count == 0) { cells[s] = null; continue; }
 
-                any = true;
+                // 읽어 본 적도 없는 칸만 null 이다. 읽어 봤는데 값을 하나도 못 얻은 칸(깨진 카운터 등)은
+                // n 0 · coverage 0 으로 낸다 — null 이면 "그 구간엔 이 지표가 없었다"로 읽힌다.
+                if (w.Attempts == 0) { cells[s] = null; continue; }
+
+                // 전 지표를 물을 때 값이 하나도 없는 행은 빼서 응답을 줄인다. 콕 집어 물었으면 남긴다.
+                any |= w.Count > 0 || kind is not null;
                 cells[s] = new
                 {
                     n = w.Count,
+                    coverage = McpJsonHelpers.Finite(w.Coverage),
                     avg = McpJsonHelpers.Finite(w.Mean),
                     p95 = McpJsonHelpers.Finite(w.Quantiles[1]),
                     max = McpJsonHelpers.Finite(w.Max),
@@ -192,21 +200,23 @@ public sealed class IntervalTools(McpContext ctx)
                 seconds = Math.Round(TimeSpan.FromTicks(s.To - s.From).TotalSeconds, 3),
                 truncated = truncatedSegments[i],
             }).ToArray(),
-            // 행마다 segments 배열의 i 번째 칸이 위 segments[i] 구간이다. 표본이 없는 칸은 null.
+            // 행마다 segments 배열의 i 번째 칸이 위 segments[i] 구간이다. 읽어 본 적도 없는 칸은 null,
+            // 읽었는데 값을 못 얻은 칸은 n 0 · coverage 0.
             rows,
         };
     }
 
     // ── 공통 ────────────────────────────────────────────────────
 
+    /// <param name="keepEmpty">표본이 없어도 빈 칸(값은 전부 null)을 돌려준다. 아니면 null.</param>
     private IntervalBlock? Block(DeviceHandle device, MetricKind kind, long from, long to,
-        double threshold, out bool truncated)
+        double threshold, bool keepEmpty, out bool truncated)
     {
         bool percent = kind.Unit() == MetricUnit.Percent;
         var w = WindowStatistics.Compute(ctx.Registry, device.SlotOf(kind), from, to,
             Quantiles, percent ? threshold : null);
         truncated = w.StartsBeforeBuffer;
-        if (w.Count == 0) return null;
+        if (w.Count == 0 && !keepEmpty) return null;
 
         return new IntervalBlock(
             kind.ToString(), device.Key, McpJsonHelpers.UnitName(kind.Unit()), w.Count,
@@ -214,6 +224,7 @@ public sealed class IntervalTools(McpContext ctx)
             McpJsonHelpers.Finite(w.Quantiles[0]), McpJsonHelpers.Finite(w.Quantiles[1]),
             McpJsonHelpers.Finite(w.Quantiles[2]), McpJsonHelpers.Finite(w.StdDev))
         {
+            Coverage = McpJsonHelpers.Finite(w.Coverage),
             SaturationThreshold = percent ? threshold : null,
             SaturatedFraction = percent ? McpJsonHelpers.Finite(w.FractionAtOrAbove) : null,
         };
@@ -290,6 +301,10 @@ public sealed record IntervalBlock(
     [property: JsonPropertyName("p99")] double? P99,
     [property: JsonPropertyName("stdDev")] double? StdDev)
 {
+    /// <summary>읽어 본 실측 중 값을 얻은 비율(0~1). <see cref="StatsBlock.Coverage"/> 와 같다.</summary>
+    [JsonPropertyName("coverage")]
+    public double? Coverage { get; init; }
+
     [JsonPropertyName("saturationThreshold")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public double? SaturationThreshold { get; init; }

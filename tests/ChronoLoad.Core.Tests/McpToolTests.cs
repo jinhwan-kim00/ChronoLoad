@@ -302,6 +302,31 @@ public class McpToolTests
         Assert.Equal(JsonValueKind.Null, block.GetProperty("saturatedFraction").ValueKind);
     }
 
+    /// <summary>
+    /// 130V 실측 재현: 앱이 부하 휴식 중에 켜져 휴식 3초의 0 만 표본이 되고, 부하 구간은 깨진 카운터라 전부 측정 불가였다.
+    /// 포화 비율 0 만 보면 "놀았다"로 읽힌다. coverage 가 통계가 구간의 일부만의 것임을 드러낸다.
+    /// </summary>
+    [Fact]
+    public void Coverage_shows_how_much_of_the_interval_the_statistics_stand_for()
+    {
+        var (ctx, registry, _) = Build();
+        new ChronoLoadTools(ctx).ResetStats(confirm: true);
+        // 온도는 4틱에 한 번만 실측이다(나머지는 유지값).
+        for (int i = 0; i < 15; i++)
+            PushAt(registry, i, [0f, i < 3 ? 0f : float.NaN, 0f, 50f], [true, true, true, i % 4 == 0]);
+
+        var block = Json(new ChronoLoadTools(ctx).GetStatsSinceReset(metric: "GpuUtil"))
+            .GetProperty("stats")[0];
+
+        Assert.Equal(3, block.GetProperty("sampleCount").GetInt64());
+        Assert.Equal(0, block.GetProperty("saturatedFraction").GetDouble());
+        Assert.Equal(0.2, block.GetProperty("coverage").GetDouble(), 4);
+
+        // 실측이 아닌(유지값) 칸은 시도로도 세지 않는다 — Slow 지표의 coverage 가 1/4 로 보이면 안 된다.
+        var temp = Json(new ChronoLoadTools(ctx).GetStatsSinceReset(metric: "GpuTemp")).GetProperty("stats")[0];
+        Assert.Equal(1.0, temp.GetProperty("coverage").GetDouble());
+    }
+
     [Fact]
     public void Reset_can_skip_or_narrow_the_previous_interval()
     {

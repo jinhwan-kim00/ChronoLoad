@@ -36,17 +36,49 @@ public class BrokenEngineCounterTests
         });
         Assert.Equal(0, guard.Count);
 
-        // 다음 틱은 차분이 음수(−13.8e9)라 PDH 가 상태 무효를 준다. 직전에 값을 내던 인스턴스라 거꾸로 간 것이다.
+        // 다음 틱은 차분이 음수(−13.8e9)라 PDH 가 상태 무효를 준다. 직전 읽기에서 유효했던 인스턴스라 거꾸로 간 것이다.
         Tick(guard, () =>
         {
             Assert.True(guard.Invalid(Neural));
-            Assert.False(guard.Invalid(Idle));      // 놀던 인스턴스는 거꾸로 갈 수 없다
+            Assert.Equal(EngineReading.Trusted, guard.Read(Idle, 0));
         });
         Assert.Equal(1, guard.Count);
 
         // 쓰레기가 우연히 그럴듯한 범위에 떨어져도 믿지 않는다 — 걸러지지 않으면 100 으로 잘려 거짓 포화가 된다.
         Tick(guard, () => Assert.Equal(EngineReading.Broken, guard.Read(Neural, 54.2)));
         Tick(guard, () => Assert.Equal(EngineReading.Broken, guard.Read(Neural, 27007.512)));
+        Assert.Equal(1, guard.Count);
+    }
+
+    /// <summary>
+    /// 130V 실측(09:40:15~19): 부하 회차 사이 4초 동안 원시값이 멈춰 0 을 내다가, 재개 첫 읽기에서 바로 거꾸로 갔다.
+    /// 앱이 그 휴식 중에 켜지면 이 인스턴스가 "움직인 적"이 없다. 그래도 직전 읽기에서 유효했으므로 깨짐이다 —
+    /// 놓치면 남은 다른 프로세스의 0 이 GpuCompute 의 유일한 표본이 되어 통계가 0% 로 굳는다.
+    /// </summary>
+    [Fact]
+    public void A_counter_that_was_idle_and_then_runs_backwards_is_broken()
+    {
+        var guard = new EngineCounterGuard();
+
+        for (int i = 0; i < 4; i++)
+            Tick(guard, () => Assert.Equal(EngineReading.Trusted, guard.Read(Neural, 0)));
+
+        Tick(guard, () => Assert.True(guard.Invalid(Neural)));      // d1 = −15,485,284,158
+        Assert.Equal(1, guard.Count);
+    }
+
+    [Fact]
+    public void Idle_zeros_do_not_earn_trust_back()
+    {
+        var guard = new EngineCounterGuard();
+        Tick(guard, () => guard.Read(Neural, 0));
+        Tick(guard, () => guard.Invalid(Neural));
+
+        // 휴식이 10초를 넘어도 풀리지 않는다. 풀리면 재개 첫 무효가 다시 새 인스턴스의 것처럼 지나간다.
+        for (int i = 0; i < EngineCounterGuard.ForgiveAfter * 3; i++)
+            Tick(guard, () => Assert.Equal(EngineReading.Broken, guard.Read(Neural, 0)));
+
+        Tick(guard, () => Assert.True(guard.Invalid(Neural)));
         Assert.Equal(1, guard.Count);
     }
 
@@ -68,25 +100,33 @@ public class BrokenEngineCounterTests
         var guard = new EngineCounterGuard();
 
         // 새 인스턴스는 기준선이 없어 첫 수집에서 늘 무효다. 그것을 깨짐으로 세면 측정 불가가 일상이 된다.
+        Assert.False(guard.WantsInvalid);           // 첫 읽기의 무효는 전부 기준선이 없어서다
         Tick(guard, () => Assert.False(guard.Invalid(Neural)));
         Tick(guard, () => Assert.Equal(EngineReading.Trusted, guard.Read(Neural, 37.5)));
         Assert.Equal(0, guard.Count);
         Assert.True(guard.WantsInvalid);
 
-        // 움직이던 인스턴스가 쉬면(0) 더 기억하지 않는다. 유휴에서는 무효 항목의 이름을 만들 필요가 없다.
-        Tick(guard, () => guard.Read(Neural, 0));
-        Assert.False(guard.WantsInvalid);
+        // 한 번 빠졌다가(프로세스 재시작 등) 다시 나타난 인스턴스도 직전 읽기에 없었으므로 새 것이다.
+        Tick(guard, () => guard.Read(Idle, 0));
+        Tick(guard, () => Assert.False(guard.Invalid(Neural)));
+        Assert.Equal(0, guard.Count);
     }
 
     [Fact]
-    public void A_broken_instance_is_forgotten_once_it_disappears()
+    public void A_broken_instance_survives_a_short_absence_and_is_forgotten_after_a_long_one()
     {
         var guard = new EngineCounterGuard();
         Tick(guard, () => guard.Read(Neural, 73127.215));
         Tick(guard, () => guard.Invalid(Neural));
         Assert.Equal(1, guard.Count);
 
-        Tick(guard, () => guard.Read(Idle, 0));      // 프로세스가 끝나 인스턴스가 사라졌다
+        // 한 틱 열거에서 빠져도 잊지 않는다. 다시 나타난 첫 무효는 기준선이 없어서일 수도 있지만 이미 깨진 인스턴스다.
+        Tick(guard, () => guard.Read(Idle, 0));
+        Tick(guard, () => Assert.True(guard.Invalid(Neural)));
+        Assert.Equal(1, guard.Count);
+
+        // 오래 보이지 않으면 프로세스가 끝난 것으로 본다.
+        for (int i = 0; i < EngineCounterGuard.ForgetAfter; i++) Tick(guard, () => guard.Read(Idle, 0));
         Assert.Equal(0, guard.Count);
 
         // 같은 이름이 다시 나타나면(PID 재사용) 새 인스턴스로 받는다.

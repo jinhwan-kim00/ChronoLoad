@@ -32,15 +32,23 @@ internal enum EngineReading
 /// </para>
 /// <list type="bullet">
 /// <item>상한(<see cref="MaxPlausiblePercent"/>)을 넘는 값 — 그 값만 <see cref="EngineReading.Skipped"/>.</item>
-/// <item>직전에 값을 낸 인스턴스가 상태 무효로 나옴 — 누적값이 거꾸로 갔다는 뜻이라 <see cref="EngineReading.Broken"/>.
+/// <item>직전 읽기에서 유효했던 인스턴스가 상태 무효로 나옴 — 누적값이 거꾸로 갔다는 뜻이라 <see cref="EngineReading.Broken"/>.
 /// 그 프로세스가 사는 동안 기억하고, 그럴듯한 값도 믿지 않는다. 쓰레기가 우연히 0~1000 사이에 떨어지면
-/// 걸러지지 않고 100 으로 잘려 거짓 포화가 되기 때문이다. <see cref="ForgiveAfter"/> 번 연달아 정상 범위면 다시 믿는다.</item>
+/// 걸러지지 않고 100 으로 잘려 거짓 포화가 되기 때문이다. 0 이 아닌 정상 범위 값이 <see cref="ForgiveAfter"/> 번
+/// 연달아 나오면 다시 믿는다.</item>
 /// </list>
 /// <para>
 /// 상태 무효만으로는 깨졌다고 보지 않는다. 새로 생긴 인스턴스는 기준선이 없어 첫 수집에서 늘 무효다 —
 /// 엔진 인스턴스가 1,200개를 넘고 프로세스가 수시로 뜨고 지므로, 그걸 깨짐으로 세면 측정 불가가 일상이 된다.
-/// 그래서 "직전에 값이 있었는가"를 본다. 놀고 있는 인스턴스는 누적값이 움직이지 않아 거꾸로 갈 수도 없으므로,
-/// 0 보다 큰 값을 낸 인스턴스만 기억한다 — 부하 중에도 수십 개다.
+/// 그래서 "직전 읽기에서 유효했는가"를 본다. <b>값이 0 이던 인스턴스도 센다.</b> 처음에는 0 보다 큰 값을 낸 인스턴스만
+/// 기억했다 — 놀던 카운터는 움직이지 않으니 거꾸로 갈 수도 없다고 봤다. 실측은 달랐다. 깨진 Neural 카운터는 부하 회차
+/// 사이에 4초 동안 0(원시값 정지)을 내다가 재개 첫 읽기에서 바로 거꾸로 갔다. 앱이 그 휴식 중에 켜지면 첫 무효를 새
+/// 인스턴스의 것으로 오인했고, 남은 다른 프로세스의 0 이 <c>GpuCompute</c> 의 유일한 표본이 되어 리셋 전까지 통계가 0% 로
+/// 굳었다. 이름은 어차피 읽기마다 만들어지므로 전부 기억하는 비용은 집합 연산뿐이다.
+/// </para>
+/// <para>
+/// <b>쉬는 동안의 0 은 신뢰 회복으로 세지 않는다.</b> 세면 휴식이 10초를 넘을 때 깨진 카운터가 풀리고, 재개 첫 무효가 다시
+/// 새 인스턴스의 것처럼 지나간다. 깨진 인스턴스가 한두 번 열거에서 빠져도 바로 잊지 않는다(<see cref="ForgetAfter"/>).
 /// </para>
 /// <para>
 /// 어느 경우든 그 그룹을 0 으로 남기지 않는 것이 요점이다. 버리기만 하면 노는 다른 프로세스의 0 만 남아
@@ -52,22 +60,29 @@ internal sealed class EngineCounterGuard
 {
     /// <summary>
     /// 한 인스턴스가 한 구간에 낼 수 있는 값의 상한(%). 정상 카운터도 계상이 몰리면 몇 배가 된다 —
-    /// 130V 의 ffmpeg 부하에서 Compute 376%·1,413%, VideoDecode 559%. 깨진 카운터는 1.8e14(B580)·27,007~279,947%(130V).
+    /// 130V 의 ffmpeg 부하에서 Compute 376%·1,413%, VideoDecode 559%. 깨진 카운터는 1.8e14(B580)·27,007~305,523%(130V).
     /// 넘는 값은 그 틱만 쓰지 않는다.
     /// </summary>
     public const double MaxPlausiblePercent = 1000;
 
     /// <summary>
-    /// 깨졌다고 본 인스턴스가 이만큼 연달아 정상 범위의 값을 내면 다시 믿는다. 드라이버 재시작처럼 누적값이 한 번
-    /// 되감긴 정상 카운터를 풀어 주기 위한 것이다. 깨진 카운터는 매번 수만% 거나 상태 무효라 여기까지 오지 못한다.
+    /// 깨졌다고 본 인스턴스가 이만큼 연달아 0 이 아닌 정상 범위 값을 내면 다시 믿는다. 드라이버 재시작처럼 누적값이 한 번
+    /// 되감긴 정상 카운터를 풀어 주기 위한 것이다. 깨진 카운터는 일할 때 매번 수만% 거나 상태 무효라 여기까지 오지 못한다.
     /// </summary>
     public const int ForgiveAfter = 10;
+
+    /// <summary>
+    /// 깨진 인스턴스가 열거에 이만큼 연달아 보이지 않으면 잊는다. 프로세스가 끝났다고 본다. 이름에 PID 가 들어 있어
+    /// 그 사이 같은 이름이 다른 프로세스로 돌아올 일은 드물고, 돌아와도 정상이면 <see cref="ForgiveAfter"/> 로 풀린다.
+    /// </summary>
+    public const int ForgetAfter = 60;
 
     // 깨진 인스턴스 → (마지막으로 본 읽기 번호, 연달아 낸 정상 범위 값의 수). 보통 비어 있거나 한두 개다.
     private readonly Dictionary<string, (long Seen, int Streak)> _broken = new(StringComparer.Ordinal);
 
-    // 직전 읽기에서 0 보다 큰 값을 낸 인스턴스 → 읽기 번호. 이것이 상태 무효로 나오면 누적값이 거꾸로 간 것이다.
-    private readonly Dictionary<string, long> _moving = new(StringComparer.Ordinal);
+    // 직전 읽기와 이번 읽기에서 유효한 값을 낸 인스턴스. 직전에 있던 것이 이번에 상태 무효면 누적값이 거꾸로 간 것이다.
+    private HashSet<string> _previous = new(StringComparer.Ordinal);
+    private HashSet<string> _current = new(StringComparer.Ordinal);
     private long _pass;
 
     /// <summary>지금 기억하고 있는 깨진 인스턴스 수.</summary>
@@ -77,10 +92,10 @@ internal sealed class EngineCounterGuard
     public HashSet<string> SnapshotBroken() => new(_broken.Keys, StringComparer.Ordinal);
 
     /// <summary>
-    /// 상태 무효를 알려 줄 필요가 있는가. 움직이던 인스턴스도 깨진 인스턴스도 없으면(유휴) 없다 —
-    /// 그때는 무효 항목의 이름을 만드는 비용을 아낀다.
+    /// 상태 무효를 알려 줄 필요가 있는가. 아직 아무것도 읽지 않았으면(첫 읽기) 없다 —
+    /// 그때의 무효는 전부 기준선이 없어서다.
     /// </summary>
-    public bool WantsInvalid => _broken.Count > 0 || _moving.Count > 0;
+    public bool WantsInvalid => _broken.Count > 0 || _previous.Count > 0;
 
     /// <summary>값이 한 인스턴스가 한 구간에 낼 수 있는 범위인가.</summary>
     public static bool IsPlausible(double value) =>
@@ -91,12 +106,13 @@ internal sealed class EngineCounterGuard
     /// <summary>값이 온 인스턴스.</summary>
     public EngineReading Read(string instance, double value)
     {
+        _current.Add(instance);
         bool plausible = IsPlausible(value);
-        if (!(value <= 0)) _moving[instance] = _pass;     // 상한을 넘은 값도 움직인 것이다. NaN 도 여기로 온다.
 
         if (_broken.Count > 0 && _broken.TryGetValue(instance, out var known))
         {
-            int streak = plausible ? known.Streak + 1 : 0;
+            // 쉬는 동안의 0 은 연속을 늘리지도 끊지도 않는다 — 믿을 근거가 아니다.
+            int streak = !plausible ? 0 : value > 0 ? known.Streak + 1 : known.Streak;
             if (streak < ForgiveAfter)
             {
                 _broken[instance] = (_pass, streak);
@@ -113,7 +129,7 @@ internal sealed class EngineCounterGuard
     }
 
     /// <summary>
-    /// 상태가 무효였던 인스턴스. 깨진 것이면(이미 알았든, 직전에 값을 내다가 지금 거꾸로 갔든) true.
+    /// 상태가 무효였던 인스턴스. 깨진 것이면(이미 알았든, 직전 읽기에서 유효하다가 지금 거꾸로 갔든) true.
     /// 처음 보는 인스턴스의 무효는 기준선이 없어서일 뿐이라 false 다.
     /// </summary>
     public bool Invalid(string instance)
@@ -124,20 +140,19 @@ internal sealed class EngineCounterGuard
             return true;
         }
 
-        if (!_moving.Remove(instance)) return false;
+        if (!_previous.Contains(instance)) return false;
 
         _broken[instance] = (_pass, 0);
         SensorLog.Write($"GPU 엔진 카운터가 거꾸로 갔다 — 이 인스턴스를 측정 불가로 둔다: {instance}");
         return true;
     }
 
-    /// <summary>이번 읽기에서 움직이지 않았거나 나타나지 않은 인스턴스는 잊는다.</summary>
+    /// <summary>읽기를 마친다. 오래 보이지 않은 깨진 인스턴스는 잊는다.</summary>
     public void End()
     {
-        foreach (var (instance, seen) in _moving)
-            if (seen != _pass) _moving.Remove(instance);
+        (_previous, _current) = (_current, _previous);
+        _current.Clear();
 
         foreach (var (instance, known) in _broken)
-            if (known.Seen != _pass) _broken.Remove(instance);
-    }
-}
+            if (_pass - known.Seen >= ForgetAfter) _broken.Remove(instance);
+    }}

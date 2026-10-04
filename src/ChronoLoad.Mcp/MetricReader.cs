@@ -113,6 +113,7 @@ internal static class MetricReader
             QuantilesExact: snapshot.IsEmpty ? null : summary.Exact,
             StdDev: McpJsonHelpers.Finite(snapshot.StdDev))
         {
+            Coverage = McpJsonHelpers.Finite(snapshot.Coverage),
             SaturationThreshold = percent ? saturationThreshold : null,
             SaturatedFraction = percent ? McpJsonHelpers.Finite(summary.FractionAtOrAbove) : null,
         };

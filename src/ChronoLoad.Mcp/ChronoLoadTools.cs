@@ -190,7 +190,7 @@ public sealed class ChronoLoadTools(McpContext ctx)
     }
 
     [McpServerTool(Name = "get_stats_since_reset")]
-    [Description("MCP 스코프의 리셋 이후 누적 통계. 화면의 리셋 버튼과는 독립된 구간이다. p50·p95·p99 는 구간이 15분 안이면 정확값(quantilesExact=true), 백분율 지표는 문턱 이상 비율(saturatedFraction)을 함께 준다.")]
+    [Description("MCP 스코프의 리셋 이후 누적 통계. 화면의 리셋 버튼과는 독립된 구간이다. p50·p95·p99 는 구간이 15분 안이면 정확값(quantilesExact=true), 백분율 지표는 문턱 이상 비율(saturatedFraction)을 함께 준다. coverage 는 읽어 본 실측 중 값을 얻은 비율 — 1 보다 작으면 통계는 구간 일부만의 것이다.")]
     public object GetStatsSinceReset(
         [Description("지표 이름. 생략하면 전 지표.")] string? metric = null,
         [Description("장치 키. 생략하면 전 장치.")] string? deviceKey = null,

@@ -8,6 +8,11 @@ namespace ChronoLoad.Core.Metrics;
 public struct StatsAccumulator
 {
     public long Count;
+
+    /// <summary>
+    /// 읽어 본 횟수 — 값을 얻지 못한 실측(NaN)도 센다. <see cref="Count"/> 와의 비가 <see cref="Coverage"/> 다.
+    /// </summary>
+    public long Attempts;
     public double Sum;
     private double _mean;
     private double _m2;
@@ -33,6 +38,7 @@ public struct StatsAccumulator
     public void Reset(long nowUtcTicks)
     {
         Count = 0;
+        Attempts = 0;
         Sum = 0;
         _mean = 0;
         _m2 = 0;
@@ -43,6 +49,7 @@ public struct StatsAccumulator
 
     public void Add(float value)
     {
+        Attempts++;
         if (float.IsNaN(value)) return;
 
         Count++;
@@ -57,6 +64,16 @@ public struct StatsAccumulator
     }
 
     public readonly bool IsEmpty => Count == 0;
+
+    /// <summary>
+    /// 읽어 본 실측 중 값을 얻은 비율(0~1). 한 번도 읽지 않았으면 NaN.
+    /// </summary>
+    /// <remarks>
+    /// 통계는 얻은 값만의 것이라, 이것이 낮으면 통계가 구간 전체를 대표하지 않는다. 깨진 PDH 카운터 앞에서 실제로
+    /// 그랬다 — 앱이 부하 휴식 중에 켜지자 휴식 3초의 0 만 표본이 되고 부하 구간은 전부 측정 불가라,
+    /// 포화 비율 0 이 "GPU 가 놀았다"로 읽혔다(§5.4).
+    /// </remarks>
+    public readonly double Coverage => Attempts == 0 ? double.NaN : (double)Count / Attempts;
 
     public readonly double Mean => Count == 0 ? double.NaN : _mean;
 

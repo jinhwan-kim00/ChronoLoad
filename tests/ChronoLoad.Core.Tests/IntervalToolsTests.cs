@@ -62,6 +62,43 @@ public class IntervalToolsTests
         Assert.Equal(32, w.Count);
     }
 
+    /// <summary>
+    /// 깨진 PDH 카운터라 구간 내내 측정 불가였던 GpuCompute. 콕 집어 물으면 빈 목록이 아니라 빈 칸으로 답한다 —
+    /// 빈 목록은 "그런 지표가 없다"로도 읽힌다. 전 지표를 물으면 지금처럼 빼고 센다.
+    /// </summary>
+    [Fact]
+    public void A_named_metric_without_samples_comes_back_as_an_empty_block()
+    {
+        var registry = new MetricRegistry(64);
+        registry.Register(
+            new DeviceInfo("gpu:luid_1", DeviceClass.Gpu, "Arc", "Arc 130V", IconKind.GpuIntel, "Intel"),
+            [MetricKind.GpuUtil, MetricKind.GpuCompute]);
+        for (int i = 0; i < 20; i++) registry.CommitAll([99f, float.NaN], [true, true], At(i * 0.25));
+
+        var ctx = new McpContext(registry, new SampleEngine(registry));
+        ctx.Markers.Set("start", At(0), null);
+        ctx.Markers.Set("end", At(4.75), null);
+
+        var named = Json(new IntervalTools(ctx).GetIntervalStats("start", "end", metric: "GpuCompute"));
+        var block = named.GetProperty("stats")[0];
+        Assert.Equal(0, block.GetProperty("sampleCount").GetInt64());
+        Assert.Equal(JsonValueKind.Null, block.GetProperty("avg").ValueKind);
+        Assert.Equal(90, block.GetProperty("saturationThreshold").GetDouble());
+        Assert.Equal(JsonValueKind.Null, block.GetProperty("saturatedFraction").ValueKind);
+        Assert.Equal(0, block.GetProperty("coverage").GetDouble());          // 20번 읽어 하나도 못 얻었다
+        Assert.Equal(0, named.GetProperty("omittedEmpty").GetInt32());
+
+        // 구간 비교도 같다. 읽었는데 못 얻은 칸은 null 이 아니라 n 0 · coverage 0 이다.
+        var compared = Json(new IntervalTools(ctx).CompareIntervals(["start", "end"], metric: "GpuCompute"));
+        var cell = compared.GetProperty("rows")[0].GetProperty("segments")[0];
+        Assert.Equal(0, cell.GetProperty("n").GetInt64());
+        Assert.Equal(0, cell.GetProperty("coverage").GetDouble());
+
+        var all = Json(new IntervalTools(ctx).GetIntervalStats("start", "end"));
+        Assert.Equal(1, all.GetProperty("stats").GetArrayLength());
+        Assert.Equal(1, all.GetProperty("omittedEmpty").GetInt32());
+    }
+
     [Fact]
     public void Stats_between_two_marks()
     {

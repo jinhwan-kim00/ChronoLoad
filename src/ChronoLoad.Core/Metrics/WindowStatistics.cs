@@ -9,6 +9,7 @@ namespace ChronoLoad.Core.Metrics;
 /// <param name="StartsBeforeBuffer">
 /// 요청한 시작이 링에 남은 가장 오래된 프레임보다 앞이다. 그 앞부분은 이미 밀려나 통계에 없다.
 /// </param>
+/// <param name="Attempts">구간 안에서 읽어 본 실측 수 — 값을 얻지 못한 것(NaN)도 센다. <see cref="StatsAccumulator.Attempts"/> 와 같다.</param>
 public sealed record WindowStats(
     long Count,
     double Mean,
@@ -19,7 +20,12 @@ public sealed record WindowStats(
     double FractionAtOrAbove,
     long? FirstUtcTicks,
     long? LastUtcTicks,
-    bool StartsBeforeBuffer);
+    bool StartsBeforeBuffer,
+    long Attempts = 0)
+{
+    /// <summary>읽어 본 실측 중 값을 얻은 비율(0~1). 읽어 본 적이 없으면 NaN. <see cref="StatsAccumulator.Coverage"/> 와 같다.</summary>
+    public double Coverage => Attempts == 0 ? double.NaN : (double)Count / Attempts;
+}
 
 public static class WindowStatistics
 {
@@ -78,11 +84,14 @@ public static class WindowStatistics
 
         var samples = new List<float>();
         long? first = null, last = null;
+        long attempts = 0;
         double sum = 0;
         for (int i = 0; i < n; i++)
         {
             if (stamps[i] < fromUtcTicks || stamps[i] > toUtcTicks) continue;
-            if (!measured[i] || !float.IsFinite(values[i])) continue;
+            if (!measured[i]) continue;
+            attempts++;
+            if (!float.IsFinite(values[i])) continue;
 
             samples.Add(values[i]);
             sum += values[i];
@@ -90,7 +99,7 @@ public static class WindowStatistics
             last = stamps[i];
         }
 
-        if (samples.Count == 0) return none with { StartsBeforeBuffer = truncated };
+        if (samples.Count == 0) return none with { StartsBeforeBuffer = truncated, Attempts = attempts };
 
         double mean = sum / samples.Count;
         double m2 = 0;
@@ -113,6 +122,6 @@ public static class WindowStatistics
             q[i] = samples[(int)rank - 1];
         }
 
-        return new WindowStats(samples.Count, mean, samples[0], samples[^1], stdDev, q, fraction, first, last, truncated);
+        return new WindowStats(samples.Count, mean, samples[0], samples[^1], stdDev, q, fraction, first, last, truncated, attempts);
     }
 }
