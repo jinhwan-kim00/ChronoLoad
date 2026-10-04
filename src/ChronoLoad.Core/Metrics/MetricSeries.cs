@@ -17,6 +17,7 @@ public sealed class MetricSeries
     private readonly ulong[] _measured;
     private long _written;
     private long _lastMeasuredIndex = -1;
+    private bool _hasValue;
 
     public MetricSeries(int capacity)
     {
@@ -55,11 +56,16 @@ public sealed class MetricSeries
     }
 
     /// <summary>
-    /// 한 번이라도 실측된 적이 있는가. 거짓이면 이 지표는 <b>늦은 것이 아니라 없는 것</b>이다 —
+    /// 값을 얻은 실측이 한 번이라도 있는가. 거짓이면 이 지표는 <b>늦은 것이 아니라 없는 것</b>이다 —
     /// 슬롯은 등록됐지만 이 기기에서 그 센서가 값을 내주지 않는 경우다(온도 센서를 0개로
     /// 돌려주는 내장 GPU, PDH 만 붙은 어댑터의 전력·클럭).
     /// </summary>
-    public bool HasMeasurement => Volatile.Read(ref _lastMeasuredIndex) >= 0;
+    /// <remarks>
+    /// "측정 불가"(NaN) 실측은 세지 않는다. 장치가 절전(D3)에 있는 동안 전 슬롯에 측정 불가를 적는데,
+    /// 깨어난 뒤에도 값을 내지 않는 센서는 그 한 칸만 실측으로 남는다. 그것을 세면 슬롯이 "한참 갱신되지
+    /// 않은 값"이 되어 장치가 영영 <c>stale</c> 로 보인다 — B580 의 전력 한도(IGCL 이 내지 않는다)가 그랬다.
+    /// </remarks>
+    public bool HasMeasurement => Volatile.Read(ref _hasValue);
 
     /// <summary>
     /// 마지막 실측 이후 흘러간 샘플 수. 0이면 방금 측정됐다는 뜻이고,
@@ -86,7 +92,11 @@ public sealed class MetricSeries
         int slot = (int)(w % _buffer.Length);
         _buffer[slot] = value;
         SetMeasuredBit(slot, measured);
-        if (measured) Volatile.Write(ref _lastMeasuredIndex, w);
+        if (measured)
+        {
+            Volatile.Write(ref _lastMeasuredIndex, w);
+            if (!_hasValue && !float.IsNaN(value)) Volatile.Write(ref _hasValue, true);
+        }
         Volatile.Write(ref _written, w + 1);
     }
 

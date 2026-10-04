@@ -246,6 +246,38 @@ public class McpToolTests
     }
 
     [Fact]
+    public void A_metric_marked_unavailable_once_and_never_again_does_not_make_the_adapter_look_stale()
+    {
+        // B580 실측: 절전(D3) 중에 전 슬롯에 "측정 불가"를 적는데, 전력 한도는 IGCL 이 내지 않아 깨어난 뒤
+        // 다시 적히지 않는다. 그 한 칸을 실측으로 세자 어댑터가 부하 중에도 내내 stale:true 였다.
+        var (ctx, registry, _) = Build();
+
+        registry.CommitAll([0f, float.NaN, 0f, float.NaN], [true, true, true, true]);
+        for (int i = 0; i < 40; i++) PushWithMissingTemperature(registry, 20f);
+
+        var adapter = Json(new ChronoLoadTools(ctx).GetGpuStatus())
+            .GetProperty("adapters")[0];
+
+        Assert.False(adapter.GetProperty("stale").GetBoolean());
+        Assert.Equal(20, adapter.GetProperty("utilizationPercent").GetDouble());
+    }
+
+    [Fact]
+    public void A_metric_that_stops_reporting_makes_the_adapter_stale()
+    {
+        // 위 두 경우와 달리 값을 내던 센서가 멈춘 것은 늦은 값이다.
+        var (ctx, registry, _) = Build();
+
+        registry.PushFrame([0f, 20f, 0f, 55f]);
+        for (int i = 0; i < 40; i++) PushWithMissingTemperature(registry, 20f);
+
+        var adapter = Json(new ChronoLoadTools(ctx).GetGpuStatus())
+            .GetProperty("adapters")[0];
+
+        Assert.True(adapter.GetProperty("stale").GetBoolean());
+    }
+
+    [Fact]
     public void Stats_quantiles_are_exact_while_the_interval_fits_in_the_ring()
     {
         var (ctx, registry, gpu) = Build();

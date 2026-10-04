@@ -244,12 +244,11 @@ public sealed class ProcessProvider : IDisposable
              Dictionary<int, Dictionary<string, double>>,
              Dictionary<int, Dictionary<string, IReadOnlyList<string>>>) ReadGpuPerProcess()
     {
-        Dictionary<int, Dictionary<string, double>> byAdapter = [];
+        Dictionary<int, Dictionary<(string Luid, string EngineType), double>> byGroup = [];
         Dictionary<int, Dictionary<string, long>> byMemory = [];
-        Dictionary<int, Dictionary<string, double>> byEngine = [];
         Dictionary<int, Dictionary<string, IReadOnlyList<string>>> unmeasured = [];
 
-        if (_query is null || !_query.Collect()) return (byAdapter, byMemory, byEngine, unmeasured);
+        if (_query is null || !_query.Collect()) return ([], byMemory, [], unmeasured);
 
         Dictionary<int, HashSet<(string Luid, string EngineType)>>? lost = null;
         void MarkUnknown(string instance)
@@ -272,21 +271,15 @@ public sealed class ProcessProvider : IDisposable
             }
 
             if (value <= 0 || !TryParse(instance, out int pid, out string luid, out string engineType)) return;
-            value = Math.Min(value, 100);
-
-            // 어댑터별로는 엔진 중 최댓값을 쓴다. 엔진 사용률을 더하면 200% 가 나온다 —
-            // 3D 와 Copy 가 동시에 도는 것은 두 배로 바쁜 것이 아니다.
-            var adapters = byAdapter.TryGetValue(pid, out var a) ? a : byAdapter[pid] = Empty<double>();
-            adapters[luid] = Math.Max(adapters.GetValueOrDefault(luid), value);
-
-            var engines = byEngine.TryGetValue(pid, out var e) ? e : byEngine[pid] = Empty<double>();
-            engines[engineType] = Math.Min(100, engines.GetValueOrDefault(engineType) + value);
+            var groups = byGroup.TryGetValue(pid, out var g) ? g : byGroup[pid] = new(GroupKeyComparer.Instance);
+            groups[(luid, engineType)] = groups.GetValueOrDefault((luid, engineType)) + Math.Min(value, 100);
         }, noCap100: true, onInvalid: !_engineGuard.WantsInvalid && knownBroken is null ? null : instance =>
         {
             if (_engineGuard.Invalid(instance) || knownBroken?.Invoke(instance) == true) MarkUnknown(instance);
         });
         _engineGuard.End();
 
+        var (byAdapter, byEngine) = CombineEngineGroups(byGroup);
         if (lost is not null) DropUnmeasured(lost, byAdapter, byEngine, unmeasured);
 
         _processMemory?.Read((instance, value) =>
@@ -299,6 +292,58 @@ public sealed class ProcessProvider : IDisposable
         });
 
         return (byAdapter, byMemory, byEngine, unmeasured);
+    }
+
+    /// <summary>
+    /// 프로세스의 (어댑터, 엔진 종류)별 합을 어댑터별·엔진 종류별 사용률로 묶는다.
+    /// 어댑터 사용률은 <b>종류 안에서는 합산하고 종류끼리는 최댓값</b>이다 — 어댑터 쪽(<c>GpuProvider.ReadEngines</c>)·
+    /// 작업 관리자와 같은 정의다.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 종류끼리 더하면 200% 가 나온다 — 3D 와 Copy 가 동시에 도는 것은 두 배로 바쁜 것이 아니다.
+    /// </para>
+    /// <para>
+    /// 반대로 인스턴스 하나하나의 최댓값을 쓰면 같은 종류의 엔진이 여럿인 GPU 에서 절반만 잡힌다.
+    /// RTX 5080 은 NVENC 가 둘이라 <c>hevc_nvenc</c> 한 세션이 두 인스턴스에 50% 씩 실렸고, 엔진별 값은
+    /// VideoEncode 99.5% 인데 어댑터 값은 49.8% 였다.
+    /// </para>
+    /// </remarks>
+    internal static (Dictionary<int, Dictionary<string, double>> ByAdapter,
+                     Dictionary<int, Dictionary<string, double>> ByEngine) CombineEngineGroups(
+        Dictionary<int, Dictionary<(string Luid, string EngineType), double>> byGroup)
+    {
+        Dictionary<int, Dictionary<string, double>> byAdapter = [];
+        Dictionary<int, Dictionary<string, double>> byEngine = [];
+
+        foreach (var (pid, groups) in byGroup)
+        {
+            var adapters = byAdapter[pid] = Empty<double>();
+            var engines = byEngine[pid] = Empty<double>();
+
+            foreach (var ((luid, engineType), sum) in groups)
+            {
+                double value = Math.Min(sum, 100);
+                adapters[luid] = Math.Max(adapters.GetValueOrDefault(luid), value);
+                engines[engineType] = Math.Min(100, engines.GetValueOrDefault(engineType) + value);
+            }
+        }
+
+        return (byAdapter, byEngine);
+    }
+
+    /// <summary>(LUID, 엔진 종류) 키를 대소문자 없이 비교한다. 어댑터 키를 대조하는 다른 사전과 맞춘다.</summary>
+    private sealed class GroupKeyComparer : IEqualityComparer<(string Luid, string EngineType)>
+    {
+        public static readonly GroupKeyComparer Instance = new();
+
+        public bool Equals((string Luid, string EngineType) x, (string Luid, string EngineType) y) =>
+            StringComparer.OrdinalIgnoreCase.Equals(x.Luid, y.Luid) &&
+            StringComparer.OrdinalIgnoreCase.Equals(x.EngineType, y.EngineType);
+
+        public int GetHashCode((string Luid, string EngineType) key) => HashCode.Combine(
+            StringComparer.OrdinalIgnoreCase.GetHashCode(key.Luid),
+            StringComparer.OrdinalIgnoreCase.GetHashCode(key.EngineType));
     }
 
     /// <summary>

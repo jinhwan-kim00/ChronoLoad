@@ -46,6 +46,23 @@ public class MeasuredSampleTests
     }
 
     [Fact]
+    public void A_series_that_only_ever_measured_unavailable_has_no_measurement()
+    {
+        // 절전(D3) 중에 적힌 "측정 불가" 한 칸. 깨어난 뒤에도 센서가 값을 내지 않으면 이 칸만 남는다.
+        var series = new MetricSeries(8);
+        series.Write(float.NaN, measured: true);
+        series.Write(float.NaN, measured: false);
+        Assert.False(series.HasMeasurement);
+
+        series.Write(42f, measured: true);
+        Assert.True(series.HasMeasurement);
+
+        // 한 번 값을 얻은 지표가 다시 측정 불가가 돼도 "없는 지표"로 돌아가지 않는다.
+        series.Write(float.NaN, measured: true);
+        Assert.True(series.HasMeasurement);
+    }
+
+    [Fact]
     public void Measured_flags_survive_wraparound()
     {
         var series = new MetricSeries(4);
